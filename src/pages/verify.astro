@@ -1,0 +1,68 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { createSupabaseServerClient } from '../lib/supabase/server';
+
+const emailFromQuery = Astro.url.searchParams.get('email') ?? '';
+let error: string | null = null;
+let info: string | null = null;
+let email = emailFromQuery;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const action = String(form.get('action') ?? 'verify');
+  email = String(form.get('email') ?? '');
+  const supabase = createSupabaseServerClient(Astro);
+
+  if (action === 'resend') {
+    const { error: resendError } = await supabase.auth.resend({ type: 'signup', email });
+    if (resendError) error = resendError.message;
+    else info = 'A new code has been sent to your email.';
+  } else {
+    const token = String(form.get('token') ?? '').trim();
+    const { error: verifyError } = await supabase.auth.verifyOtp({
+      email,
+      token,
+      type: 'signup',
+    });
+    if (verifyError) error = verifyError.message;
+    else return Astro.redirect('/profile');
+  }
+}
+---
+
+<Layout>
+  <main style="max-width: 24rem; margin: 4rem auto; font-family: sans-serif;">
+    <h1>Confirm your email</h1>
+    <p>Enter the 6-digit code we sent to your email.</p>
+
+    <form method="POST">
+      <input type="hidden" name="action" value="verify" />
+      <p>
+        <label>Email<br />
+          <input name="email" type="email" required value={email} />
+        </label>
+      </p>
+      <p>
+        <label>Code<br />
+          <input
+            name="token"
+            inputmode="numeric"
+            pattern="[0-9]*"
+            maxlength="6"
+            autocomplete="one-time-code"
+            required
+          />
+        </label>
+      </p>
+      {error && <p style="color: crimson">{error}</p>}
+      {info && <p style="color: green">{info}</p>}
+      <button type="submit">Verify</button>
+    </form>
+
+    <form method="POST" style="margin-top: 1rem;">
+      <input type="hidden" name="action" value="resend" />
+      <input type="hidden" name="email" value={email} />
+      <button type="submit">Resend code</button>
+    </form>
+  </main>
+</Layout>

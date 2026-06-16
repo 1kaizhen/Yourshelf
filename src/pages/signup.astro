@@ -1,0 +1,47 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { createSupabaseServerClient } from '../lib/supabase/server';
+import UsernameField from '../components/UsernameField.tsx';
+
+let error: string | null = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const email = String(form.get('email') ?? '');
+  const password = String(form.get('password') ?? '');
+  const username = String(form.get('username') ?? '');
+
+  const supabase = createSupabaseServerClient(Astro);
+  const { data, error: signUpError } = await supabase.auth.signUp({
+    email,
+    password,
+    options: { data: { username, display_name: username } },
+  });
+
+  if (signUpError) {
+    error = signUpError.message;
+  } else if (!data.session) {
+    return Astro.redirect(`/verify?email=${encodeURIComponent(email)}`);
+  } else {
+    return Astro.redirect('/profile');
+  }
+}
+---
+
+<Layout>
+  <main style="max-width: 24rem; margin: 4rem auto; font-family: sans-serif;">
+    <h1>Sign up</h1>
+    <form method="POST">
+      <p>
+        <label>Username<br />
+          <UsernameField client:load />
+        </label>
+      </p>
+      <p><label>Email<br /><input name="email" type="email" required /></label></p>
+      <p><label>Password<br /><input name="password" type="password" required minlength="6" /></label></p>
+      {error && <p style="color: crimson">{error}</p>}
+      <button type="submit">Create account</button>
+    </form>
+    <p><a href="/login">Already have an account? Log in</a></p>
+  </main>
+</Layout>
