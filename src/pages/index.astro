@@ -1,11 +1,53 @@
 ---
-import Welcome from '../components/Welcome.astro';
 import Layout from '../layouts/Layout.astro';
+import Nav from '../components/Nav.astro';
+import GameRow from '../components/GameRow.astro';
+import { fetchDiscover } from '../lib/api';
 
-// Welcome to Astro! Wondering what to do next? Check out the Astro documentation at https://docs.astro.build
-// Don't want to use any of this? Delete everything in this file, the `assets`, `components`, and `layouts` directories, and start fresh.
+const [topRated, storyDriven, shortGames, marathonGames] = await Promise.all([
+  fetchDiscover({ sort: 'rating', limit: 12 }),
+  fetchDiscover({ theme: 'Drama', sort: 'rating', limit: 12 }),
+  fetchDiscover({ maxHours: 8, sort: 'rating', limit: 12 }),
+  fetchDiscover({ minHours: 40, sort: 'rating', limit: 12 }),
+]);
 ---
 
 <Layout>
-	<Welcome />
+  <div class="page">
+    <Nav />
+    <main class="container">
+      <header class="hero">
+        <h1>Find your next game.</h1>
+        <p class="lede">Search, browse by mood, or see what the community is loving.</p>
+        <div class="ctas">
+          <a href="/search" class="btn-primary">Search games</a>
+          <a href="/browse" class="btn-secondary">Browse by filter</a>
+        </div>
+      </header>
+
+      <GameRow title="Top Rated by Critics" items={topRated} href="/browse?sort=rating" />
+      <GameRow title="Story-driven" items={storyDriven} href="/browse?theme=Drama&sort=rating" />
+      <GameRow title="Short — under 8 hours" items={shortGames} href="/browse?maxHours=8&sort=rating" />
+      <GameRow title="Marathon — 40+ hours" items={marathonGames} href="/browse?minHours=40&sort=rating" />
+    </main>
+  </div>
 </Layout>
+
+<style>
+  :global(body) { background: #0b0d10; color: #e6e8eb; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; }
+  .page { min-height: 100vh; }
+  .container { max-width: 72rem; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
+
+  .hero { margin-bottom: 3rem; }
+  .hero h1 { margin: 0 0 0.5rem; font-size: 2.25rem; letter-spacing: -0.03em; }
+  .lede { color: #9aa3ad; margin: 0 0 1.5rem; font-size: 1.05rem; }
+  .ctas { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+  .btn-primary, .btn-secondary {
+    display: inline-block; padding: 0.65rem 1.25rem; border-radius: 8px;
+    text-decoration: none; font-size: 0.95rem; font-weight: 500;
+  }
+  .btn-primary { background: #6366f1; color: white; }
+  .btn-primary:hover { background: #5457e0; }
+  .btn-secondary { background: #11151a; color: #e6e8eb; border: 1px solid #2a3038; }
+  .btn-secondary:hover { border-color: #6366f1; }
+</style>

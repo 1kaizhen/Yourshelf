@@ -1,0 +1,43 @@
+---
+const { user } = Astro.locals;
+const path = Astro.url.pathname;
+const link = (href: string, label: string) =>
+  ({ href, label, active: path === href || (href !== '/' && path.startsWith(href)) });
+const links = [
+  link('/', 'Discover'),
+  link('/browse', 'Browse'),
+  link('/search', 'Search'),
+];
+---
+<nav class="topbar">
+  <a href="/" class="brand">Yourshelf</a>
+  <div class="links">
+    {links.map((l) => (
+      <a href={l.href} class={l.active ? 'active' : ''}>{l.label}</a>
+    ))}
+    {user ? (
+      <>
+        <a href="/my-games" class={path === '/my-games' ? 'active' : ''}>My games</a>
+        <a href="/profile">Account</a>
+        <a href="/logout">Log out</a>
+      </>
+    ) : (
+      <>
+        <a href="/login">Log in</a>
+        <a href="/signup">Sign up</a>
+      </>
+    )}
+  </div>
+</nav>
+
+<style>
+  .topbar {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 1rem 1.5rem; border-bottom: 1px solid #1f242b; background: #0e1116;
+  }
+  .brand { font-weight: 700; color: #e6e8eb; text-decoration: none; letter-spacing: -0.01em; }
+  .links { display: flex; gap: 1.25rem; }
+  .links a { color: #9aa3ad; text-decoration: none; font-size: 0.9rem; }
+  .links a:hover { color: #e6e8eb; }
+  .links a.active { color: #e6e8eb; }
+</style>

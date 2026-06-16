@@ -1,5 +1,6 @@
 ---
 import Layout from '../layouts/Layout.astro';
+import Nav from '../components/Nav.astro';
 
 const { supabase, user } = Astro.locals;
 const currentUser = user!;
@@ -49,10 +50,7 @@ const memberSince = profile?.created_at
 
 <Layout>
   <div class="page">
-    <nav class="topbar">
-      <a href="/" class="brand">Yourshelf</a>
-      <a href="/logout" class="logout">Log out</a>
-    </nav>
+    <Nav />
 
     <main class="container">
       <header class="hero">
@@ -109,28 +107,6 @@ const memberSince = profile?.created_at
   }
 
   .page { min-height: 100vh; }
-
-  .topbar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 1rem 1.5rem;
-    border-bottom: 1px solid #1f242b;
-    background: #0e1116;
-  }
-  .brand {
-    font-weight: 700;
-    font-size: 1.05rem;
-    color: #e6e8eb;
-    text-decoration: none;
-    letter-spacing: -0.01em;
-  }
-  .logout {
-    color: #9aa3ad;
-    text-decoration: none;
-    font-size: 0.9rem;
-  }
-  .logout:hover { color: #e6e8eb; }
 
   .container {
     max-width: 44rem;

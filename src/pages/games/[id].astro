@@ -1,0 +1,262 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import Nav from '../../components/Nav.astro';
+import { fetchGameDetail, fetchGameSeries } from '../../lib/api';
+
+const id = Number(Astro.params.id);
+if (!Number.isInteger(id) || id <= 0) {
+  return new Response('Bad request', { status: 400 });
+}
+
+const { supabase, user } = Astro.locals;
+const [game, series] = await Promise.all([fetchGameDetail(id), fetchGameSeries(id)]);
+
+if (!game) return new Response('Not found', { status: 404 });
+
+let userGame: { status: string; rating: number | null; notes: string | null } | null = null;
+if (user) {
+  const { data } = await supabase
+    .from('user_games')
+    .select('status, rating, notes')
+    .eq('user_id', user.id)
+    .eq('igdb_id', id)
+    .maybeSingle();
+  userGame = data;
+}
+
+const releaseDate = game.release_date
+  ? new Date(game.release_date).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
+  : null;
+const rating = game.rating ? Math.round(game.rating) : null;
+const seriesOthers = series.filter((s) => s.igdb_id !== game.igdb_id);
+const redirectTo = `/games/${game.igdb_id}`;
+
+const STATUSES = [
+  { value: 'wishlist', label: 'Wishlist' },
+  { value: 'backlog', label: 'Backlog' },
+  { value: 'playing', label: 'Playing' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'dropped', label: 'Dropped' },
+];
+---
+
+<Layout>
+  <div class="page">
+    <Nav />
+
+    <main class="container">
+      <header class="hero">
+        {game.cover_url ? (
+          <img src={game.cover_url} alt={`${game.name} cover`} class="cover" />
+        ) : (
+          <div class="cover placeholder" />
+        )}
+        <div class="hero-text">
+          <h1>{game.name}</h1>
+          {releaseDate && <p class="muted">{releaseDate}</p>}
+          <div class="tags">
+            {game.genres.map((g) => <span class="tag">{g}</span>)}
+          </div>
+          {rating !== null && (
+            <p class="rating">
+              <strong>{rating}</strong>/100
+              {game.rating_count && <span class="muted small"> · {game.rating_count} ratings</span>}
+            </p>
+          )}
+          {game.hltb && (game.hltb.main || game.hltb.main_extra || game.hltb.completionist) && (
+            <p class="muted small">
+              HLTB:
+              {game.hltb.main && ` Main ${game.hltb.main}h`}
+              {game.hltb.main_extra && ` · Extra ${game.hltb.main_extra}h`}
+              {game.hltb.completionist && ` · 100% ${game.hltb.completionist}h`}
+            </p>
+          )}
+        </div>
+      </header>
+
+      {user ? (
+        <section class="card">
+          <h2>Your tracking</h2>
+          <form method="POST" action="/api/track" class="status-row">
+            <input type="hidden" name="action" value="set_status" />
+            <input type="hidden" name="igdb_id" value={game.igdb_id} />
+            <input type="hidden" name="redirect_to" value={redirectTo} />
+            {STATUSES.map((s) => (
+              <button
+                type="submit"
+                name="status"
+                value={s.value}
+                class={`pill ${userGame?.status === s.value ? 'active' : ''}`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </form>
+
+          {userGame && (
+            <>
+              <form method="POST" action="/api/track" class="meta-form">
+                <input type="hidden" name="action" value="update_meta" />
+                <input type="hidden" name="igdb_id" value={game.igdb_id} />
+                <input type="hidden" name="redirect_to" value={redirectTo} />
+                <label>
+                  Your rating (1–10)
+                  <input
+                    type="number"
+                    name="rating"
+                    min="1"
+                    max="10"
+                    value={userGame.rating ?? ''}
+                  />
+                </label>
+                <label>
+                  Notes
+                  <textarea name="notes" rows="3">{userGame.notes ?? ''}</textarea>
+                </label>
+                <button type="submit" class="btn-primary">Save</button>
+              </form>
+
+              <form method="POST" action="/api/track">
+                <input type="hidden" name="action" value="delete" />
+                <input type="hidden" name="igdb_id" value={game.igdb_id} />
+                <input type="hidden" name="redirect_to" value={redirectTo} />
+                <button type="submit" class="btn-danger">Remove from shelf</button>
+              </form>
+            </>
+          )}
+        </section>
+      ) : (
+        <p class="muted"><a href="/login">Log in</a> to track this game.</p>
+      )}
+
+      {game.summary && (
+        <section class="card">
+          <h2>Summary</h2>
+          <p>{game.summary}</p>
+        </section>
+      )}
+
+      {(game.developers.length > 0 || game.publishers.length > 0) && (
+        <section class="card">
+          <h2>Credits</h2>
+          {game.developers.length > 0 && (
+            <p><strong>Developer:</strong> {game.developers.map((d) => d.name).join(', ')}</p>
+          )}
+          {game.publishers.length > 0 && (
+            <p><strong>Publisher:</strong> {game.publishers.map((p) => p.name).join(', ')}</p>
+          )}
+        </section>
+      )}
+
+      {(game.dlcs.length > 0 || game.expansions.length > 0 || game.remakes.length > 0 || game.remasters.length > 0) && (
+        <section class="card">
+          <h2>Related</h2>
+          {[
+            { title: 'DLC', items: game.dlcs },
+            { title: 'Expansions', items: game.expansions },
+            { title: 'Remakes', items: game.remakes },
+            { title: 'Remasters', items: game.remasters },
+          ].filter((g) => g.items.length > 0).map((group) => (
+            <div class="relation-group">
+              <h3>{group.title}</h3>
+              <ul class="relation-list">
+                {group.items.map((r) => (
+                  <li><a href={`/games/${r.igdb_id}`}>{r.name}</a></li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </section>
+      )}
+
+      {seriesOthers.length > 0 && (
+        <section class="card">
+          <h2>Series</h2>
+          <ul class="series-list">
+            {seriesOthers.map((g) => (
+              <li>
+                <a href={`/games/${g.igdb_id}`}>
+                  {g.cover_url ? <img src={g.cover_url} alt="" loading="lazy" /> : <div class="series-placeholder" />}
+                  <div>
+                    <div class="series-name">{g.name}</div>
+                    {g.year && <div class="muted small">{g.year}</div>}
+                  </div>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </main>
+  </div>
+</Layout>
+
+<script is:inline define:vars={{}}>
+  /* no JS needed; forms handle posts */
+</script>
+
+<style>
+  :global(body) { background: #0b0d10; color: #e6e8eb; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; }
+  .page { min-height: 100vh; }
+  .container { max-width: 60rem; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
+
+  .hero { display: flex; gap: 2rem; margin-bottom: 2rem; }
+  .cover { width: 200px; aspect-ratio: 3 / 4; border-radius: 10px; object-fit: cover; flex-shrink: 0; }
+  .placeholder { background: #1a1f26; }
+  .hero-text h1 { margin: 0 0 0.5rem; letter-spacing: -0.02em; }
+  .muted { color: #9aa3ad; }
+  .small { font-size: 0.85rem; }
+  .tags { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.75rem 0; }
+  .tag { background: #1a1f26; color: #c5cbd2; padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.8rem; }
+  .rating strong { font-size: 1.5rem; color: #6fdb9b; }
+
+  .card {
+    background: #11151a; border: 1px solid #1f242b; border-radius: 12px;
+    padding: 1.5rem; margin-bottom: 1.25rem;
+  }
+  .card h2 { margin: 0 0 1rem; font-size: 1rem; font-weight: 600; color: #c5cbd2; text-transform: uppercase; letter-spacing: 0.06em; }
+
+  .status-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; }
+  .pill {
+    background: #0b0d10; border: 1px solid #2a3038; color: #c5cbd2;
+    padding: 0.4rem 0.85rem; border-radius: 999px; cursor: pointer; font-size: 0.9rem;
+  }
+  .pill:hover { border-color: #6366f1; }
+  .pill.active { background: #6366f1; border-color: #6366f1; color: white; }
+
+  .meta-form { display: flex; flex-direction: column; gap: 0.75rem; margin: 1rem 0; }
+  .meta-form label { display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.9rem; color: #c5cbd2; }
+  .meta-form input, .meta-form textarea {
+    background: #0b0d10; border: 1px solid #2a3038; border-radius: 8px;
+    padding: 0.5rem 0.7rem; color: #e6e8eb; font-size: 0.95rem; font-family: inherit;
+  }
+  .meta-form input:focus, .meta-form textarea:focus { outline: none; border-color: #6366f1; }
+
+  .btn-primary {
+    align-self: flex-start; background: #6366f1; color: white; border: none;
+    border-radius: 8px; padding: 0.55rem 1.15rem; cursor: pointer; font-size: 0.9rem;
+  }
+  .btn-primary:hover { background: #5457e0; }
+  .btn-danger {
+    background: transparent; color: #ff8a93; border: 1px solid #4a1f24;
+    border-radius: 8px; padding: 0.45rem 1rem; cursor: pointer; font-size: 0.85rem;
+  }
+  .btn-danger:hover { background: #2a1416; }
+
+  .relation-group { margin-bottom: 1rem; }
+  .relation-group h3 { margin: 0 0 0.4rem; font-size: 0.85rem; color: #9aa3ad; font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; }
+  .relation-list { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  .relation-list a { color: #c5cbd2; text-decoration: none; background: #1a1f26; padding: 0.3rem 0.7rem; border-radius: 6px; font-size: 0.85rem; }
+  .relation-list a:hover { color: #e6e8eb; background: #232a32; }
+
+  .series-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+  .series-list a { display: flex; gap: 0.75rem; align-items: center; text-decoration: none; color: inherit; padding: 0.5rem; border-radius: 8px; }
+  .series-list a:hover { background: #1a1f26; }
+  .series-list img, .series-placeholder { width: 48px; aspect-ratio: 3/4; object-fit: cover; border-radius: 4px; background: #1a1f26; }
+  .series-name { font-size: 0.9rem; }
+
+  @media (max-width: 640px) {
+    .hero { flex-direction: column; }
+    .cover { width: 140px; }
+  }
+</style>

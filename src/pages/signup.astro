@@ -34,7 +34,7 @@ if (Astro.request.method === 'POST') {
     <form method="POST">
       <p>
         <label>Username<br />
-          <UsernameField client:load />
+          <UsernameField client:only="react" />
         </label>
       </p>
       <p><label>Email<br /><input name="email" type="email" required /></label></p>

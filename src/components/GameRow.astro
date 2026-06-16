@@ -1,0 +1,76 @@
+---
+import type { GameLite } from '../lib/api';
+
+type Item = GameLite & { badge?: string };
+interface Props {
+  title: string;
+  items: Item[];
+  emptyMessage?: string;
+  href?: string;
+  hrefLabel?: string;
+}
+
+const { title, items, emptyMessage = 'Nothing here yet.', href, hrefLabel = 'See all' } = Astro.props;
+---
+
+<section class="row">
+  <div class="row-head">
+    <h2>{title}</h2>
+    {href && <a href={href} class="see-all">{hrefLabel} →</a>}
+  </div>
+  {items.length === 0 ? (
+    <p class="muted">{emptyMessage}</p>
+  ) : (
+    <ul class="strip">
+      {items.map((g) => (
+        <li>
+          <a href={`/games/${g.igdb_id}`}>
+            {g.cover_url ? (
+              <img src={g.cover_url} alt="" loading="lazy" />
+            ) : (
+              <div class="placeholder" />
+            )}
+            <div class="meta">
+              <div class="name">{g.name}</div>
+              <div class="sub">
+                {g.year && <span>{g.year}</span>}
+                {g.badge && <span class="badge">{g.badge}</span>}
+              </div>
+            </div>
+          </a>
+        </li>
+      ))}
+    </ul>
+  )}
+</section>
+
+<style>
+  .row { margin-bottom: 2.5rem; }
+  .row-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.85rem; }
+  .row h2 { margin: 0; font-size: 1.1rem; letter-spacing: -0.01em; }
+  .see-all { color: #818cf8; text-decoration: none; font-size: 0.85rem; }
+  .see-all:hover { color: #a5b4fc; }
+  .muted { color: #9aa3ad; }
+
+  .strip {
+    list-style: none; padding: 0; margin: 0;
+    display: flex; gap: 0.85rem; overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: thin;
+  }
+  .strip li { flex: 0 0 150px; scroll-snap-align: start; }
+  .strip a {
+    display: block; text-decoration: none; color: inherit;
+    background: #11151a; border: 1px solid #1f242b; border-radius: 10px;
+    overflow: hidden; transition: border-color 0.15s, transform 0.15s;
+  }
+  .strip a:hover { border-color: #6366f1; transform: translateY(-2px); }
+  .strip img, .placeholder {
+    width: 100%; aspect-ratio: 3/4; object-fit: cover;
+    background: #1a1f26; display: block;
+  }
+  .meta { padding: 0.55rem 0.7rem; }
+  .name { font-size: 0.85rem; font-weight: 500; line-height: 1.3; }
+  .sub { display: flex; justify-content: space-between; align-items: center; margin-top: 0.25rem; font-size: 0.75rem; color: #9aa3ad; }
+  .badge { background: #1a1f26; color: #6fdb9b; padding: 0.05rem 0.4rem; border-radius: 999px; font-size: 0.7rem; }
+</style>

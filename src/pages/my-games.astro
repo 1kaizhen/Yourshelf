@@ -1,0 +1,127 @@
+---
+import Layout from '../layouts/Layout.astro';
+import Nav from '../components/Nav.astro';
+import { fetchGamesByIds } from '../lib/api';
+
+const { supabase, user } = Astro.locals;
+const currentUser = user!;
+
+const STATUSES = [
+  { value: 'all', label: 'All' },
+  { value: 'wishlist', label: 'Wishlist' },
+  { value: 'backlog', label: 'Backlog' },
+  { value: 'playing', label: 'Playing' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'dropped', label: 'Dropped' },
+];
+
+const filter = Astro.url.searchParams.get('status') ?? 'all';
+
+let query = supabase
+  .from('user_games')
+  .select('igdb_id, status, rating, notes, updated_at')
+  .eq('user_id', currentUser.id)
+  .order('updated_at', { ascending: false });
+
+if (filter !== 'all') query = query.eq('status', filter);
+
+const { data: rows, error } = await query;
+const entries = rows ?? [];
+const gameMap = await fetchGamesByIds(entries.map((e) => e.igdb_id));
+
+const counts = new Map<string, number>();
+{
+  const { data: allRows } = await supabase
+    .from('user_games')
+    .select('status')
+    .eq('user_id', currentUser.id);
+  for (const r of allRows ?? []) counts.set(r.status, (counts.get(r.status) ?? 0) + 1);
+  counts.set('all', allRows?.length ?? 0);
+}
+---
+
+<Layout>
+  <div class="page">
+    <Nav />
+
+    <main class="container">
+      <h1>My games</h1>
+
+      <div class="filter">
+        {STATUSES.map((s) => (
+          <a
+            href={`/my-games?status=${s.value}`}
+            class={`pill ${filter === s.value ? 'active' : ''}`}
+          >
+            {s.label}
+            <span class="count">{counts.get(s.value) ?? 0}</span>
+          </a>
+        ))}
+      </div>
+
+      {error && <p class="alert">{error.message}</p>}
+
+      {entries.length === 0 ? (
+        <p class="muted">Nothing here yet. <a href="/search">Search for a game</a> to add it.</p>
+      ) : (
+        <ul class="grid">
+          {entries.map((entry) => {
+            const g = gameMap.get(entry.igdb_id);
+            return (
+              <li class="card">
+                <a href={`/games/${entry.igdb_id}`} class="thumb">
+                  {g?.cover_url ? <img src={g.cover_url} alt="" /> : <div class="placeholder" />}
+                </a>
+                <div class="info">
+                  <a href={`/games/${entry.igdb_id}`} class="name">{g?.name ?? `IGDB #${entry.igdb_id}`}</a>
+                  {g?.year && <div class="muted small">{g.year}</div>}
+                  <div class="status-tag">{entry.status}</div>
+                  {entry.rating !== null && <div class="small">Your rating: <strong>{entry.rating}</strong>/10</div>}
+                  {entry.notes && <p class="notes">{entry.notes}</p>}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </main>
+  </div>
+</Layout>
+
+<style>
+  :global(body) { background: #0b0d10; color: #e6e8eb; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; }
+  .page { min-height: 100vh; }
+  .container { max-width: 60rem; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
+  h1 { margin: 0 0 1.5rem; letter-spacing: -0.02em; }
+
+  .filter { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1.5rem; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    background: #11151a; border: 1px solid #1f242b; color: #c5cbd2;
+    padding: 0.4rem 0.85rem; border-radius: 999px; font-size: 0.9rem; text-decoration: none;
+  }
+  .pill:hover { border-color: #6366f1; }
+  .pill.active { background: #6366f1; border-color: #6366f1; color: white; }
+  .count { font-size: 0.75rem; opacity: 0.85; background: rgba(255,255,255,0.08); padding: 0.05rem 0.4rem; border-radius: 999px; }
+  .pill.active .count { background: rgba(255,255,255,0.2); }
+
+  .muted { color: #9aa3ad; }
+  .small { font-size: 0.85rem; }
+  .alert { color: #ff8a93; }
+
+  .grid { list-style: none; padding: 0; margin: 0; display: grid; gap: 1rem; }
+  .card {
+    display: grid; grid-template-columns: 80px 1fr; gap: 1rem;
+    background: #11151a; border: 1px solid #1f242b; border-radius: 12px; padding: 1rem;
+  }
+  .thumb img, .placeholder { width: 80px; aspect-ratio: 3/4; object-fit: cover; border-radius: 6px; background: #1a1f26; display: block; }
+  .info { display: flex; flex-direction: column; gap: 0.3rem; }
+  .name { font-weight: 500; color: #e6e8eb; text-decoration: none; }
+  .name:hover { color: #a5b4fc; }
+  .status-tag {
+    align-self: flex-start;
+    background: #1a1f26; color: #c5cbd2; padding: 0.15rem 0.55rem;
+    border-radius: 999px; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em;
+  }
+  .notes { margin: 0.4rem 0 0; font-size: 0.9rem; color: #c5cbd2; white-space: pre-wrap; }
+</style>

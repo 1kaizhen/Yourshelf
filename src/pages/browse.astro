@@ -1,0 +1,192 @@
+---
+import Layout from '../layouts/Layout.astro';
+import Nav from '../components/Nav.astro';
+import { fetchDiscover, type DiscoverParams } from '../lib/api';
+
+const sp = Astro.url.searchParams;
+const params: DiscoverParams = {
+  genre: sp.get('genre') ?? undefined,
+  theme: sp.get('theme') ?? undefined,
+  developer: sp.get('developer') ?? undefined,
+  publisher: sp.get('publisher') ?? undefined,
+  maxHours: sp.get('maxHours') ? Number(sp.get('maxHours')) : undefined,
+  minHours: sp.get('minHours') ? Number(sp.get('minHours')) : undefined,
+  sort: (sp.get('sort') as DiscoverParams['sort']) ?? 'rating',
+  limit: 48,
+};
+
+const hasFilters = Boolean(
+  params.genre || params.theme || params.developer || params.publisher ||
+  params.maxHours || params.minHours
+);
+
+const results = hasFilters ? await fetchDiscover(params) : await fetchDiscover({ sort: 'rating', limit: 48 });
+
+const GENRE_CHIPS = ['Shooter', 'Role-playing (RPG)', 'Adventure', 'Strategy', 'Platform', 'Puzzle', 'Sport', 'Simulator', 'Indie'];
+const THEME_CHIPS = ['Drama', 'Horror', 'Comedy', 'Fantasy', 'Science fiction', 'Survival', 'Stealth'];
+const LENGTH_CHIPS = [
+  { label: 'Short (<8h)', max: 8 },
+  { label: 'Medium (8–20h)', min: 8, max: 20 },
+  { label: 'Long (20–40h)', min: 20, max: 40 },
+  { label: 'Marathon (40+h)', min: 40 },
+];
+
+function withParam(key: keyof DiscoverParams, value: string | number | undefined): string {
+  const next = new URLSearchParams(sp);
+  if (value === undefined || value === '' || value === null) next.delete(key);
+  else next.set(key, String(value));
+  return `?${next.toString()}`;
+}
+function clearAll() {
+  return '/browse';
+}
+---
+
+<Layout>
+  <div class="page">
+    <Nav />
+    <main class="container">
+      <h1>Browse</h1>
+
+      <form method="GET" class="filter-form">
+        <div class="field">
+          <label>Genre</label>
+          <input name="genre" value={params.genre ?? ''} placeholder="e.g. Role-playing (RPG)" />
+        </div>
+        <div class="field">
+          <label>Theme</label>
+          <input name="theme" value={params.theme ?? ''} placeholder="e.g. Drama" />
+        </div>
+        <div class="field">
+          <label>Developer</label>
+          <input name="developer" value={params.developer ?? ''} placeholder="e.g. FromSoftware" />
+        </div>
+        <div class="field">
+          <label>Publisher</label>
+          <input name="publisher" value={params.publisher ?? ''} placeholder="e.g. Bandai Namco" />
+        </div>
+        <div class="field">
+          <label>Min hours</label>
+          <input name="minHours" type="number" min="1" value={params.minHours ?? ''} />
+        </div>
+        <div class="field">
+          <label>Max hours</label>
+          <input name="maxHours" type="number" min="1" value={params.maxHours ?? ''} />
+        </div>
+        <div class="field">
+          <label>Sort</label>
+          <select name="sort">
+            <option value="rating" selected={params.sort === 'rating'}>Top rated</option>
+            <option value="release_date" selected={params.sort === 'release_date'}>Newest</option>
+            <option value="name" selected={params.sort === 'name'}>A–Z</option>
+          </select>
+        </div>
+        <div class="actions">
+          <button type="submit" class="btn-primary">Apply</button>
+          <a href={clearAll()} class="btn-secondary">Clear</a>
+        </div>
+      </form>
+
+      <div class="chips">
+        <div class="chip-row">
+          <span class="chip-label">Genres:</span>
+          {GENRE_CHIPS.map((g) => (
+            <a href={withParam('genre', g)} class={`chip ${params.genre === g ? 'active' : ''}`}>{g}</a>
+          ))}
+        </div>
+        <div class="chip-row">
+          <span class="chip-label">Themes:</span>
+          {THEME_CHIPS.map((t) => (
+            <a href={withParam('theme', t)} class={`chip ${params.theme === t ? 'active' : ''}`}>{t}</a>
+          ))}
+        </div>
+        <div class="chip-row">
+          <span class="chip-label">Length:</span>
+          {LENGTH_CHIPS.map((l) => {
+            const next = new URLSearchParams(sp);
+            next.delete('minHours'); next.delete('maxHours');
+            if (l.min) next.set('minHours', String(l.min));
+            if (l.max) next.set('maxHours', String(l.max));
+            const isActive =
+              (l.min ?? 0) === (params.minHours ?? 0) &&
+              (l.max ?? 0) === (params.maxHours ?? 0);
+            return <a href={`?${next.toString()}`} class={`chip ${isActive ? 'active' : ''}`}>{l.label}</a>;
+          })}
+        </div>
+      </div>
+
+      {results.length === 0 ? (
+        <p class="muted">No results. Try loosening filters.</p>
+      ) : (
+        <ul class="grid">
+          {results.map((g) => (
+            <li>
+              <a href={`/games/${g.igdb_id}`}>
+                {g.cover_url ? <img src={g.cover_url} alt="" loading="lazy" /> : <div class="placeholder" />}
+                <div class="meta">
+                  <div class="name">{g.name}</div>
+                  {g.year && <div class="year">{g.year}</div>}
+                </div>
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
+    </main>
+  </div>
+</Layout>
+
+<style>
+  :global(body) { background: #0b0d10; color: #e6e8eb; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; }
+  .page { min-height: 100vh; }
+  .container { max-width: 72rem; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
+  h1 { margin: 0 0 1.5rem; letter-spacing: -0.02em; }
+  .muted { color: #9aa3ad; }
+
+  .filter-form {
+    display: grid; gap: 0.85rem; margin-bottom: 1.5rem;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    background: #11151a; border: 1px solid #1f242b; border-radius: 12px; padding: 1.25rem;
+  }
+  .field { display: flex; flex-direction: column; gap: 0.3rem; }
+  .field label { font-size: 0.8rem; color: #9aa3ad; text-transform: uppercase; letter-spacing: 0.06em; }
+  .field input, .field select {
+    background: #0b0d10; border: 1px solid #2a3038; border-radius: 8px;
+    padding: 0.5rem 0.7rem; color: #e6e8eb; font-size: 0.9rem; font-family: inherit;
+  }
+  .field input:focus, .field select:focus { outline: none; border-color: #6366f1; }
+  .actions { display: flex; align-items: flex-end; gap: 0.5rem; grid-column: span 1; }
+  .btn-primary { background: #6366f1; color: white; border: none; border-radius: 8px; padding: 0.55rem 1.15rem; cursor: pointer; font-size: 0.9rem; }
+  .btn-primary:hover { background: #5457e0; }
+  .btn-secondary {
+    background: transparent; color: #c5cbd2; border: 1px solid #2a3038;
+    border-radius: 8px; padding: 0.45rem 1rem; text-decoration: none; font-size: 0.9rem;
+  }
+  .btn-secondary:hover { border-color: #6366f1; }
+
+  .chips { margin-bottom: 1.75rem; display: flex; flex-direction: column; gap: 0.65rem; }
+  .chip-row { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+  .chip-label { font-size: 0.8rem; color: #9aa3ad; margin-right: 0.25rem; min-width: 4.5rem; }
+  .chip {
+    background: #11151a; border: 1px solid #1f242b; color: #c5cbd2;
+    padding: 0.3rem 0.7rem; border-radius: 999px; font-size: 0.8rem; text-decoration: none;
+  }
+  .chip:hover { border-color: #6366f1; }
+  .chip.active { background: #6366f1; border-color: #6366f1; color: white; }
+
+  .grid {
+    list-style: none; padding: 0; margin: 0;
+    display: grid; gap: 1rem;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  }
+  .grid a {
+    display: block; text-decoration: none; color: inherit;
+    background: #11151a; border: 1px solid #1f242b; border-radius: 10px;
+    overflow: hidden; transition: border-color 0.15s, transform 0.15s;
+  }
+  .grid a:hover { border-color: #6366f1; transform: translateY(-2px); }
+  .grid img, .placeholder { width: 100%; aspect-ratio: 3/4; object-fit: cover; background: #1a1f26; display: block; }
+  .meta { padding: 0.55rem 0.7rem; }
+  .name { font-size: 0.85rem; font-weight: 500; line-height: 1.3; }
+  .year { font-size: 0.75rem; color: #9aa3ad; margin-top: 0.2rem; }
+</style>
