@@ -1,53 +1,1372 @@
 ---
 import Layout from '../layouts/Layout.astro';
 import Nav from '../components/Nav.astro';
-import GameRow from '../components/GameRow.astro';
-import { fetchDiscover } from '../lib/api';
+import CardRowSection from '../components/CardRowSection.astro';
+import { fetchDiscover, fetchGameDetail, fetchFeaturedList, fetchNewest, fetchCardsByIds, fetchCalendar, fetchBrowseCategories, type GameDetail, type GameLite } from '../lib/api';
 
-const [topRated, storyDriven, shortGames, marathonGames] = await Promise.all([
+const { supabase, user } = Astro.locals;
+
+// "Games in your list" needs the logged-in user's most-recent IGDB IDs from
+// Supabase first; everything else (enrichment with rating/genres/cover) is
+// done server-side by the Yourshelf-api /api/cards endpoint.
+let myGameIds: number[] = [];
+if (user) {
+  const { data: rows } = await supabase
+    .from('user_games')
+    .select('igdb_id, updated_at')
+    .eq('user_id', user.id)
+    .order('updated_at', { ascending: false })
+    .limit(6);
+  myGameIds = (rows ?? []).map((r) => r.igdb_id as number);
+}
+
+const [topRated, shortGames, featuredList, newestCards, myGameCards, calendarDays, browseCats] = await Promise.all([
   fetchDiscover({ sort: 'rating', limit: 12 }),
-  fetchDiscover({ theme: 'Drama', sort: 'rating', limit: 12 }),
   fetchDiscover({ maxHours: 8, sort: 'rating', limit: 12 }),
-  fetchDiscover({ minHours: 40, sort: 'rating', limit: 12 }),
+  fetchFeaturedList(),
+  // Backend computes "newest popular" with proper date filter (last 2 years
+  // through 90 days out, cover required, ≥5 ratings) — see getNewestPopular.
+  fetchNewest(6),
+  // Backend hydrates the user's IGDB IDs into full cards with rating/genres.
+  fetchCardsByIds(myGameIds),
+  // Calendar = upcoming releases bucketed by date; empty days are skipped.
+  fetchCalendar(30),
+  // Browse categories — backend returns title/subtitle/href + top-4 covers.
+  fetchBrowseCategories(),
 ]);
+
+// Fallback to top-rated when the user is logged out or has an empty library.
+const myGamesRow = myGameCards.length > 0
+  ? myGameCards
+  : (await fetchCardsByIds(topRated.slice(0, 6).map((g) => g.igdb_id)));
+
+const featured = featuredList[0] ?? null;
+const ROTATE_MS = 8000;
+
+// Detail lookup for rows that still come straight from fetchDiscover
+// (Top Recommendation thumbnails, Today's Free). Calendar is fully hydrated
+// in the backend.
+const detailIds = new Set<number>();
+for (const g of [...topRated.slice(0, 6), ...shortGames.slice(0, 6)]) {
+  detailIds.add(g.igdb_id);
+}
+const detailEntries = await Promise.all(
+  Array.from(detailIds).map(async (id) => [id, await fetchGameDetail(id)] as const)
+);
+const detailMap = new Map<number, GameDetail | null>(detailEntries);
+
+function ratingOf(g: GameLite) {
+  const d = detailMap.get(g.igdb_id);
+  if (!d?.rating) return null;
+  return Math.round(d.rating) / 10;
+}
+function genresOf(g: GameLite): string[] {
+  return detailMap.get(g.igdb_id)?.genres?.slice(0, 2) ?? [];
+}
+function hoursOf(g: GameLite): number | null {
+  const h = detailMap.get(g.igdb_id)?.hltb?.main;
+  return typeof h === 'number' ? Math.round(h) : null;
+}
+
+// Calendar columns come straight from the backend already bucketed and
+// date-sorted. Empty days are pre-filtered server-side.
+const calendarCols = calendarDays;
+
+// Browse categories come from the backend (each carries its top-4 cover URLs).
+const categories = browseCats;
 ---
 
 <Layout>
   <div class="page">
     <Nav />
-    <main class="container">
-      <header class="hero">
-        <h1>Find your next game.</h1>
-        <p class="lede">Search, browse by mood, or see what the community is loving.</p>
-        <div class="ctas">
-          <a href="/search" class="btn-primary">Search games</a>
-          <a href="/browse" class="btn-secondary">Browse by filter</a>
-        </div>
-      </header>
+    <main>
+      <!-- Top Recommendation -->
+      <section class="section">
+        <header class="section-head">
+          <h2>Top Recommendation</h2>
+          <button class="ghost-btn" type="button">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 113 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+            Customize Layout
+          </button>
+        </header>
 
-      <GameRow title="Top Rated by Critics" items={topRated} href="/browse?sort=rating" />
-      <GameRow title="Story-driven" items={storyDriven} href="/browse?theme=Drama&sort=rating" />
-      <GameRow title="Short — under 8 hours" items={shortGames} href="/browse?maxHours=8&sort=rating" />
-      <GameRow title="Marathon — 40+ hours" items={marathonGames} href="/browse?minHours=40&sort=rating" />
+        {featured && (
+          <article class="hero" data-featured-hero style={`background-image: url(${featured.background_url});`}>
+            <div class="hero-overlay" aria-hidden="true"></div>
+            <div class="hero-content">
+              <div class="hero-product">
+                <div class="hero-cover">
+                  <img data-hero-cover src={featured.cover_url ?? ''} alt={featured.name} loading="eager" />
+                </div>
+                <div class="hero-info">
+                  <img
+                    class="hero-logo"
+                    data-hero-logo
+                    src={featured.title_logo_url}
+                    alt={featured.name}
+                    style={featured.title_logo_url ? '' : 'display:none'}
+                  />
+                  <h3
+                    class="hero-name"
+                    data-hero-name
+                    style={featured.title_logo_url ? 'display:none' : ''}
+                  >{featured.name}</h3>
+                  <p class="hero-blurb" data-hero-blurb>{featured.blurb}</p>
+                  <div class="hero-stats">
+                    <div class="stat">
+                      <span class="stat-value" data-hero-rating-value>{featured.rating.value}</span>
+                      <span class="stat-label" data-hero-rating-source>{featured.rating.source}</span>
+                    </div>
+                    <div class="stat">
+                      <span class="stat-value" data-hero-hltb-value>{featured.hltb.value}</span>
+                      <span class="stat-label" data-hero-hltb-label>{featured.hltb.label}</span>
+                    </div>
+                    <div class="stat">
+                      <div class="platform-row" data-hero-platforms>
+                        {featured.platforms.map((p) => (
+                          <span class={`platform-icon p-${p.key}`} aria-label={p.label}>
+                            {p.key === 'windows' && (
+                              <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M3 5.5L11 4.3v7.2H3V5.5zm0 13L11 19.7v-7.2H3v6zm9-14.4L21 3v8.5h-9V4.1zm0 15.8L21 21v-8.5h-9v7.4z"/></svg>
+                            )}
+                            {p.key === 'playstation' && (
+                              <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M9.5 3v15.6l3.2 1V8.3c0-.7.3-1.2.9-1.2.7 0 1 .7 1 1.4v4.8c2-.9 4.4-1.7 4.4-4.8C19 4 14.9 2.9 9.5 3zM3.4 18.6c-1.4-.4-1.6-1.2 0-1.8L9 14.8v2.6L5 18.9c-.5.2-.6.5 0 .7L9 18v2.4l-1.1.2c-1.5.3-3.2.2-4.5-.2-1.5-.5-1.7-1.3 0-1.8zm17.2-2.6c1.5.4 1.8 1.2.3 1.7l-5.4 1.9V17l4-1.4c.5-.2.6-.4 0-.6l-4-1.4v-1.7l5.1 1.7z"/></svg>
+                            )}
+                            {p.key === 'xbox' && (
+                              <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M12 2C6.5 2 2 6.5 2 12c0 2 .6 3.9 1.6 5.4-.1-1.9 2.8-6.4 6.1-9.5C7.2 6.4 5.2 5.7 4.2 5.7c-.3 0-.5.1-.7.2C5.3 3.5 8.5 2 12 2zm0 20c5.5 0 10-4.5 10-10 0-2-.6-3.9-1.6-5.4.1 1.9-2.8 6.4-6.1 9.5 2.5 1.5 4.5 2.2 5.5 2.2.3 0 .5-.1.7-.2C18.7 20.5 15.5 22 12 22zm0-6.2c-1.5-1.5-5.7-7.7-4.8-8.6 1-1 4.8 2 4.8 2s3.8-3 4.8-2c.9.9-3.3 7.1-4.8 8.6z"/></svg>
+                            )}
+                          </span>
+                        ))}
+                        {featured.extra_platform_count > 0 && (
+                          <span class="platform-more" data-hero-platform-more>+{featured.extra_platform_count}</span>
+                        )}
+                      </div>
+                      <span class="stat-label">Available on</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="hero-actions">
+                <a class="btn-wishlist" data-hero-link href={`/games/${featured.igdb_id}`}>
+                  <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z"/></svg>
+                  <span>Add to Wishlist</span>
+                </a>
+                <button class="btn-fav" type="button" aria-label="Favorite">
+                  <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M12 17.3L18.2 21l-1.6-7.2L22 9.2l-7.4-.6L12 2 9.4 8.6 2 9.2l5.4 4.6L5.8 21z"/></svg>
+                </button>
+              </div>
+            </div>
+          </article>
+        )}
+
+        {featuredList.length > 1 && (
+          <div class="carousel" data-featured-carousel data-rotate-ms={ROTATE_MS}>
+            {featuredList.map((g, i) => (
+              <button
+                type="button"
+                class={`carousel-item${i === 0 ? ' active' : ''}`}
+                data-carousel-item
+                data-index={i}
+                aria-label={g.name}
+              >
+                {g.cover_url && (
+                  <img class="carousel-cover" src={g.cover_url} alt="" loading="lazy" />
+                )}
+                {g.background_url && (
+                  <img class="carousel-art" src={g.background_url} alt="" loading="lazy" />
+                )}
+                <div class="carousel-shade" aria-hidden="true"></div>
+                <div class="carousel-label">
+                  {g.title_logo_url ? (
+                    <img class="carousel-logo" src={g.title_logo_url} alt={g.name} />
+                  ) : (
+                    <span class="carousel-name">{g.name}</span>
+                  )}
+                </div>
+                <span class="carousel-progress" aria-hidden="true"></span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        <script is:inline type="application/json" data-featured-data set:html={JSON.stringify(featuredList)}></script>
+      </section>
+
+      <!-- Games in your list -->
+      <CardRowSection
+        title="Games in your list"
+        href="/my-games"
+        items={myGamesRow}
+      />
+
+      <!-- Newest Games -->
+      <CardRowSection
+        title="Newest Games"
+        href="/browse?sort=release_date"
+        items={newestCards}
+      />
+
+      <!-- Games Calendar (v2 polish — remove `cal-v2` to revert to original design) -->
+      <section class="section cal-section cal-v2">
+        <header class="cal-head">
+          <h2>Games Calendar</h2>
+          <div class="cal-controls">
+            <div class="cal-nav" role="group" aria-label="Scroll calendar">
+              <button class="cal-nav-btn" type="button" data-cal-prev aria-label="Previous">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+              <button class="cal-nav-btn cal-nav-divide" type="button" data-cal-next aria-label="Next">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+            </div>
+            <a class="cal-view-all" href="/browse?sort=release_date">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <rect x="3" y="5" width="18" height="16" rx="2" stroke="currentColor" stroke-width="1.8"/>
+                <path d="M8 3v4M16 3v4M3 10h18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              </svg>
+              View All Calendar list
+            </a>
+          </div>
+        </header>
+
+        <div class="cal-scroll-wrap">
+          <div class="cal-scroll" data-cal-scroll>
+            {calendarCols.map((col) => {
+              const display = col.games.slice(0, 3);
+              const overflow = col.games.length - display.length;
+              const monthNice = col.month.charAt(0) + col.month.slice(1).toLowerCase();
+              return (
+                <div class="cal-day-col">
+                  <div class="cal-day-head">
+                    <div class="cal-day-date">{col.day} {col.month}</div>
+                    <div class="cal-day-meta">
+                      <span>{col.weekday}</span>
+                      <span class="cal-dot">•</span>
+                      <span>{col.games.length} {col.games.length === 1 ? 'Game' : 'Games'}</span>
+                    </div>
+                  </div>
+                  <div class="cal-day-line"></div>
+                  <div class="cal-day-grid">
+                    {display.map((g) => (
+                      <article class="cal-game">
+                        <a class="cal-game-link" href={`/games/${g.igdb_id}`} aria-label={g.name}>
+                          {g.hero_url && <img class="cal-game-bg" src={g.hero_url} alt="" aria-hidden="true" />}
+                          <div class="cal-game-shade" aria-hidden="true"></div>
+                          <div class="cal-game-inner">
+                            <div class="cal-game-cover">
+                              {g.cover_url ? (
+                                <img src={g.cover_url} alt={g.name} loading="lazy" />
+                              ) : (
+                                <div class="cover-fallback"></div>
+                              )}
+                            </div>
+                            <div class="cal-game-info">
+                              <div class="cal-game-title">{g.name}</div>
+                              <div class="cal-game-plats">
+                                <div class="cal-plat-icons">
+                                  <span class="cal-plat" aria-label="Windows">
+                                    <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M3 5.5L11 4.3v7.2H3V5.5zm0 13L11 19.7v-7.2H3v6zm9-14.4L21 3v8.5h-9V4.1zm0 15.8L21 21v-8.5h-9v7.4z"/></svg>
+                                  </span>
+                                  <span class="cal-plat" aria-label="PlayStation">
+                                    <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M9.5 3v15.6l3.2 1V8.3c0-.7.3-1.2.9-1.2.7 0 1 .7 1 1.4v4.8c2-.9 4.4-1.7 4.4-4.8C19 4 14.9 2.9 9.5 3zM3.4 18.6c-1.4-.4-1.6-1.2 0-1.8L9 14.8v2.6L5 18.9c-.5.2-.6.5 0 .7L9 18v2.4l-1.1.2c-1.5.3-3.2.2-4.5-.2-1.5-.5-1.7-1.3 0-1.8zm17.2-2.6c1.5.4 1.8 1.2.3 1.7l-5.4 1.9V17l4-1.4c.5-.2.6-.4 0-.6l-4-1.4v-1.7l5.1 1.7z"/></svg>
+                                  </span>
+                                  <span class="cal-plat" aria-label="Xbox">
+                                    <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M12 2C6.5 2 2 6.5 2 12c0 2 .6 3.9 1.6 5.4-.1-1.9 2.8-6.4 6.1-9.5C7.2 6.4 5.2 5.7 4.2 5.7c-.3 0-.5.1-.7.2C5.3 3.5 8.5 2 12 2zm0 20c5.5 0 10-4.5 10-10 0-2-.6-3.9-1.6-5.4.1 1.9-2.8 6.4-6.1 9.5 2.5 1.5 4.5 2.2 5.5 2.2.3 0 .5-.1.7-.2C18.7 20.5 15.5 22 12 22zm0-6.2c-1.5-1.5-5.7-7.7-4.8-8.6 1-1 4.8 2 4.8 2s3.8-3 4.8-2c.9.9-3.3 7.1-4.8 8.6z"/></svg>
+                                  </span>
+                                  <span class="cal-plat-more">+2</span>
+                                </div>
+                                <div class="cal-plat-label">Available on</div>
+                              </div>
+                              <div class="cal-game-tags">
+                                {(g.genres.length ? g.genres : ['Adventure', 'Action']).slice(0, 2).map((t) => (
+                                  <span class="cal-tag">{t}</span>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        </a>
+                        <button class="cal-wishlist" type="button" aria-label={`Add ${g.name} to wishlist`} data-wishlist data-igdb-id={g.igdb_id}>
+                          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true">
+                            <path d="M6 4h12a1 1 0 0 1 1 1v15.382a.5.5 0 0 1-.724.447L12 17.5l-6.276 3.329A.5.5 0 0 1 5 20.382V5a1 1 0 0 1 1-1z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+                          </svg>
+                        </button>
+                      </article>
+                    ))}
+                    {overflow > 0 && (
+                      <a class="cal-more" href={`/browse?sort=release_date`}>
+                        <div class="cal-more-thumbs">
+                          {col.games.slice(display.length, display.length + 2).map((g) => (
+                            g.cover_url ? <img src={g.cover_url} alt="" aria-hidden="true" /> : <div class="cover-fallback"></div>
+                          ))}
+                        </div>
+                        <div class="cal-more-body">
+                          <div class="cal-more-title">
+                            +{overflow} more
+                            <span class="cal-more-sub">games on {col.day} {monthNice}</span>
+                          </div>
+                          <span class="cal-more-btn">View All List</span>
+                        </div>
+                      </a>
+                    )}
+                  </div>
+                  <div class="cal-day-line cal-day-line--bottom"></div>
+                </div>
+              );
+            })}
+          </div>
+          <div class="cal-fade" aria-hidden="true"></div>
+        </div>
+      </section>
+
+      <!-- Browse Games based on -->
+      <section class="section">
+        <header class="section-head">
+          <h2>Browse Games based on</h2>
+        </header>
+        <div class="cat-grid">
+          {categories.map((c) => (
+            <a class="cat-card" href={c.href}>
+              <div class="cat-strip" aria-hidden="true">
+                {c.covers.slice(0, 4).map((url) => (
+                  <div class="cat-strip-cell">
+                    <img src={url} alt="" loading="lazy" />
+                  </div>
+                ))}
+                {c.covers.length < 4 && Array.from({ length: 4 - c.covers.length }).map(() => (
+                  <div class="cat-strip-cell cat-strip-empty"></div>
+                ))}
+              </div>
+              <div class="cat-shade" aria-hidden="true"></div>
+              <div class="cat-body">
+                <h4>{c.title}</h4>
+                <p>{c.subtitle}</p>
+                <span class="cat-browse-btn">Browse</span>
+              </div>
+            </a>
+          ))}
+        </div>
+      </section>
+
+      <!-- Today's Free Game list -->
+      <CardRowSection
+        title="Today's Free Game list"
+        href="/browse"
+        items={shortGames.slice(0, 6).map((g) => ({ ...g, rating: ratingOf(g), genres: genresOf(g), hours: hoursOf(g) }))}
+      />
     </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        <div class="foot-brand">
+          <div class="brand"><span class="logo" aria-hidden="true">▤</span> Yourshelf</div>
+          <p>The first hub end-to-end analytics service for the site, designed to work with enterprises of various levels and business segments.</p>
+          <p class="muted">© 2025 — Yourshelf</p>
+        </div>
+        <div class="foot-col">
+          <h5>Open Account</h5>
+          <a href="/signup">Discover</a>
+          <a href="/browse">Design</a>
+          <a href="/search">UI conditioning</a>
+          <a href="/login">Installation</a>
+        </div>
+        <div class="foot-col">
+          <h5>Info</h5>
+          <a href="#">About us</a>
+          <a href="#">Terms & Conditions</a>
+          <a href="#">Privacy Policy</a>
+        </div>
+      </div>
+    </footer>
   </div>
 </Layout>
 
-<style>
-  :global(body) { background: #0b0d10; color: #e6e8eb; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; }
-  .page { min-height: 100vh; }
-  .container { max-width: 72rem; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
-
-  .hero { margin-bottom: 3rem; }
-  .hero h1 { margin: 0 0 0.5rem; font-size: 2.25rem; letter-spacing: -0.03em; }
-  .lede { color: #9aa3ad; margin: 0 0 1.5rem; font-size: 1.05rem; }
-  .ctas { display: flex; gap: 0.75rem; flex-wrap: wrap; }
-  .btn-primary, .btn-secondary {
-    display: inline-block; padding: 0.65rem 1.25rem; border-radius: 8px;
-    text-decoration: none; font-size: 0.95rem; font-weight: 500;
+<style is:global>
+  :root {
+    --bg: #0a0c10;
+    --bg-2: #0e1014;
+    --surface: #14171d;
+    --surface-2: #181c24;
+    --border: #1f242b;
+    --text: #e6e8eb;
+    --muted: #8a93a0;
+    --accent: #6366f1;
+    --accent-2: #a78bfa;
   }
-  .btn-primary { background: #6366f1; color: white; }
-  .btn-primary:hover { background: #5457e0; }
-  .btn-secondary { background: #11151a; color: #e6e8eb; border: 1px solid #2a3038; }
-  .btn-secondary:hover { border-color: #6366f1; }
+  html, body { background: var(--bg); color: var(--text); }
+  body {
+    margin: 0;
+    font-family: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  h1, h2, h3, h4, h5 { font-family: inherit; letter-spacing: -0.018em; }
 </style>
+
+<style>
+  .page { min-height: 100vh; display: flex; flex-direction: column; }
+  main { flex: 1; max-width: 1240px; margin: 0 auto; width: 100%; padding: 1.5rem 2.5rem 4rem; }
+
+  .section { margin-bottom: 2.75rem; }
+  .section-head {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 1rem; gap: 1rem;
+  }
+  .section-head h2 {
+    margin: 0;
+    color: white;
+    font-size: 20px;
+    font-weight: 700;
+    line-height: 1.4;
+    letter-spacing: -0.6px;
+  }
+  .head-actions { display: inline-flex; gap: 0.5rem; align-items: center; }
+  .ghost-btn {
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    background: transparent; color: var(--muted); border: 1px solid var(--border);
+    padding: 0.4rem 0.75rem; border-radius: 8px; font: inherit; font-size: 0.78rem;
+    cursor: pointer; text-decoration: none;
+  }
+  .ghost-btn:hover { color: var(--text); border-color: #2a3038; }
+
+  /* Hero — Top Recommendation */
+  .hero {
+    position: relative; border-radius: 24px; overflow: hidden;
+    background-color: #0f1218;
+    background-size: cover; background-position: center;
+    height: 420px;
+  }
+  .hero-overlay {
+    position: absolute; inset: 0;
+    background: rgba(0, 0, 0, 0.47);
+    border-radius: 24px;
+    pointer-events: none;
+  }
+  .hero-content {
+    position: relative; z-index: 1;
+    display: flex; flex-direction: column; gap: 12px;
+    align-items: flex-start; justify-content: flex-end;
+    padding: 36px 24px;
+    height: 100%;
+  }
+  .hero-product { display: flex; gap: 16px; align-items: flex-end; }
+  .hero-cover {
+    width: 150px; height: 225px; flex-shrink: 0;
+    border-radius: 7.5px; overflow: hidden;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.45);
+  }
+  .hero-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .cover-fallback { width: 100%; height: 100%; background: linear-gradient(135deg, #1a1f26, #11151a); }
+  .hero-info { display: flex; flex-direction: column; gap: 12px; align-items: flex-start; }
+  .hero-logo {
+    height: 52px; width: auto; display: block;
+    filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.55));
+  }
+  .hero-blurb {
+    margin: 0; max-width: 328px;
+    font-weight: 600; font-size: 12px; line-height: 1.4;
+    letter-spacing: -0.36px; color: rgba(255, 255, 255, 0.87);
+  }
+  .hero-stats { display: flex; gap: 16px; align-items: center; width: 328px; }
+  .stat {
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+  }
+  .stat-value { font-weight: 800; font-size: 20px; color: white; line-height: 1; }
+  .stat-label { font-weight: 600; font-size: 12.65px; color: rgba(255, 255, 255, 0.7); white-space: nowrap; }
+  .platform-row { display: flex; gap: 8px; align-items: center; }
+  .platform-icon {
+    width: 26px; height: 26px;
+    display: inline-flex; align-items: center; justify-content: center;
+    color: white;
+  }
+  .platform-more {
+    display: inline-flex; align-items: center; justify-content: center;
+    background: white; color: black;
+    width: 19px; height: 19px; border-radius: 5px;
+    font-weight: 800; font-size: 10.4px; line-height: 1;
+  }
+  .hero-actions { display: flex; gap: 5px; align-items: center; }
+  .btn-wishlist {
+    display: inline-flex; align-items: center; gap: 7px;
+    background: #851dd5; color: white; text-decoration: none;
+    border: 0.9px solid rgba(255, 255, 255, 0.18);
+    padding: 9px 14px; border-radius: 7px;
+    font-weight: 600; font-size: 14px; line-height: 1.4;
+  }
+  .btn-wishlist:hover { background: #7218be; }
+  .btn-fav {
+    width: 37px; height: 37px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: #851dd5; color: white;
+    border: 0.9px solid rgba(255, 255, 255, 0.18);
+    border-radius: 7px; cursor: pointer; padding: 0;
+  }
+  .btn-fav:hover { background: #7218be; }
+
+  /* Featured carousel under hero */
+  .hero-name {
+    color: white;
+    margin: 0;
+    font-size: 2.25rem;
+    font-weight: 800;
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    max-width: 328px;
+    text-shadow: 0 2px 12px rgba(0, 0, 0, 0.55);
+  }
+  .carousel {
+    display: flex; gap: 12px; align-items: center;
+    margin-top: 12px;
+  }
+  .carousel-item {
+    position: relative;
+    flex: 1 0 0; min-width: 0;
+    height: 200px;
+    border-radius: 7.281px;
+    overflow: hidden;
+    background: #11151a;
+    border: 0; padding: 0; cursor: pointer;
+    opacity: 0.8;
+    transition: opacity 0.2s, flex-basis 0.4s ease, flex-grow 0.4s ease;
+  }
+  .carousel-item:hover { opacity: 0.95; }
+  .carousel-item .carousel-cover,
+  .carousel-item .carousel-art {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover; display: block;
+    pointer-events: none;
+  }
+  /* Inactive: show portrait cover, hide wide art + label */
+  .carousel-item .carousel-art { display: none; }
+  .carousel-item .carousel-shade { display: none; }
+  .carousel-item .carousel-label { display: none; }
+
+  /* Active: show wide art with centered logo/name, hide cover */
+  .carousel-item.active {
+    flex: 0 0 289px;
+    opacity: 1;
+    border-radius: 13.147px;
+  }
+  .carousel-item.active .carousel-cover { display: none; }
+  .carousel-item.active .carousel-art { display: block; }
+  .carousel-item.active .carousel-shade {
+    display: block;
+    position: absolute; inset: 0;
+    background: linear-gradient(180deg, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.55) 100%);
+    pointer-events: none;
+  }
+  .carousel-item.active .carousel-label {
+    display: flex; align-items: center; justify-content: center;
+    position: absolute; inset: 0;
+    padding: 12px 16px 18px;
+    pointer-events: none;
+  }
+  .carousel-logo {
+    max-width: 70%; max-height: 60%;
+    width: auto; height: auto;
+    object-fit: contain;
+    filter: drop-shadow(0 2px 8px rgba(0,0,0,0.6));
+  }
+  .carousel-name {
+    color: white;
+    font-family: 'Manrope', sans-serif;
+    font-size: 1.1rem;
+    font-weight: 800;
+    text-align: center;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    line-height: 1.05;
+    max-width: 88%;
+    padding: 0.45rem 0.65rem;
+    border-top: 1.5px solid rgba(255, 255, 255, 0.85);
+    border-bottom: 1.5px solid rgba(255, 255, 255, 0.85);
+    text-shadow:
+      0 2px 6px rgba(0, 0, 0, 0.85),
+      0 0 18px rgba(0, 0, 0, 0.5);
+  }
+  .carousel-progress {
+    position: absolute; left: 0; bottom: 0;
+    height: 6px; width: 0;
+    background: #d32929;
+    pointer-events: none;
+    display: none;
+  }
+  .carousel-item.active .carousel-progress {
+    display: block;
+    animation: carousel-progress var(--rotate-duration, 8000ms) linear forwards;
+  }
+  @keyframes carousel-progress {
+    from { width: 0; }
+    to { width: 100%; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .carousel-item.active .carousel-progress { animation: none; width: 100%; }
+  }
+
+  /* Games Calendar */
+  .cal-section { margin-bottom: 2.75rem; }
+  .cal-head {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 26px; gap: 1rem;
+  }
+  .cal-head h2 {
+    margin: 0;
+    color: white;
+    font-size: 20px;
+    font-weight: 700;
+    line-height: 1.4;
+    letter-spacing: -0.6px;
+  }
+  .cal-controls { display: inline-flex; gap: 12px; align-items: center; }
+  .cal-nav {
+    display: inline-flex;
+    background: #1a1a1a;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    height: 38px;
+    overflow: hidden;
+  }
+  .cal-nav-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 10px 12px;
+    background: transparent; color: rgba(255, 255, 255, 0.7);
+    border: 0; cursor: pointer;
+    transition: color 0.15s;
+  }
+  .cal-nav-btn:hover { color: white; }
+  .cal-nav-divide { border-left: 1px solid #2c2c2c; }
+  .cal-view-all {
+    display: inline-flex; align-items: center; gap: 7px;
+    background: #1a1a1a;
+    border: 0.9px solid rgba(255, 255, 255, 0.18);
+    border-radius: 7px;
+    padding: 8px 14px;
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 14px; font-weight: 500;
+    text-decoration: none;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .cal-view-all:hover { color: white; border-color: rgba(255, 255, 255, 0.3); }
+
+  .cal-scroll-wrap { position: relative; }
+  .cal-scroll {
+    display: flex; gap: 47px; /* 749 - 702 from Figma */
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+    padding-bottom: 4px;
+    scroll-behavior: smooth;
+  }
+  .cal-scroll::-webkit-scrollbar { display: none; }
+  .cal-fade {
+    position: absolute;
+    right: 0; top: 0; bottom: 0;
+    width: 106px;
+    background: linear-gradient(90deg, rgba(17, 16, 20, 0) 0%, var(--bg) 100%);
+    pointer-events: none;
+  }
+
+  .cal-day-col {
+    flex: 0 0 702px;
+    scroll-snap-align: start;
+    display: flex; flex-direction: column;
+  }
+  .cal-day-head { margin-bottom: 16px; }
+  .cal-day-date {
+    color: white;
+    font-size: 16px;
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: 0.64px;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .cal-day-meta {
+    display: flex; gap: 4px; align-items: center;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 16px;
+    font-weight: 500;
+    letter-spacing: -0.48px;
+    line-height: 1;
+  }
+  .cal-dot { padding: 0 2px; }
+  .cal-day-line {
+    height: 1px;
+    background: rgba(255, 255, 255, 0.08);
+    margin-bottom: 13px;
+  }
+  .cal-day-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 348px);
+    gap: 14px;
+  }
+
+  /* Per-game card inside a day column.
+     - 12px corner radius (matches +more card and the rest of the page).
+     - `isolation: isolate` + `will-change: transform` force a fresh stacking
+       context so the bg image is clipped on the GPU layer, no corner bleed. */
+  .cal-game {
+    position: relative;
+    height: 131px;
+    border-radius: 12px;
+    overflow: hidden;
+    isolation: isolate;
+    background: #16161a;
+    text-decoration: none; color: inherit;
+    transition: transform 0.18s ease, box-shadow 0.18s ease;
+    will-change: transform;
+  }
+  .cal-game:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+  }
+  .cal-game-bg {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .cal-game-shade {
+    position: absolute; inset: 0;
+    background: linear-gradient(180deg, rgba(10, 10, 12, 0.78) 0%, rgba(10, 10, 12, 0.82) 100%);
+    pointer-events: none;
+    z-index: 1;
+  }
+  .cal-game-inner {
+    position: relative; z-index: 2;
+    display: flex; gap: 12px;
+    padding: 12px;
+    height: 100%;
+    box-sizing: border-box;
+    align-items: center;
+  }
+  .cal-game-cover {
+    width: 107px; height: 107px;
+    border-radius: 8px;
+    overflow: hidden;
+    flex-shrink: 0;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+  }
+  .cal-game-cover img,
+  .cal-game-cover .cover-fallback {
+    width: 100%; height: 100%; object-fit: cover; display: block;
+  }
+  .cal-game-info {
+    display: flex; flex-direction: column;
+    gap: 8px;
+    align-items: flex-start;
+    flex: 1; min-width: 0;
+  }
+  .cal-game-title {
+    color: white;
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: -0.2px;
+    width: 100%;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+  .cal-game-plats { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; }
+  .cal-plat-icons { display: flex; gap: 6px; align-items: center; }
+  .cal-plat {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 14px; height: 14px;
+    color: rgba(255, 255, 255, 0.85);
+  }
+  .cal-plat-more {
+    display: inline-flex; align-items: center; justify-content: center;
+    background: rgba(255, 255, 255, 0.95); color: #111;
+    height: 14px; min-width: 16px; padding: 0 3px;
+    border-radius: 3px;
+    font-size: 8px; font-weight: 800;
+    line-height: 1;
+    letter-spacing: 0.2px;
+  }
+  .cal-plat-label {
+    color: rgba(255, 255, 255, 0.55);
+    font-size: 9px;
+    font-weight: 500;
+    line-height: 1;
+    letter-spacing: 0.2px;
+  }
+  .cal-game-tags { display: flex; gap: 4px; flex-wrap: wrap; }
+  .cal-tag {
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 8.5px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    line-height: 1;
+    text-transform: uppercase;
+    padding: 4px 7px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+
+  /* "+N more" CTA card — uses the same 12px radius as game cards. */
+  .cal-more {
+    position: relative;
+    display: flex; gap: 12px; align-items: center;
+    height: 131px;
+    padding: 12px;
+    background: #16161a;
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: 12px;
+    overflow: hidden;
+    text-decoration: none; color: inherit;
+    transition: transform 0.18s ease, box-shadow 0.18s ease;
+    box-sizing: border-box;
+  }
+  .cal-more:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+  }
+  .cal-more-thumbs { display: flex; gap: 6px; flex-shrink: 0; }
+  .cal-more-thumbs img,
+  .cal-more-thumbs .cover-fallback {
+    width: 60px; height: 107px;
+    object-fit: cover;
+    border-radius: 8px;
+    display: block;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+  }
+  .cal-more-body {
+    flex: 1;
+    display: flex; flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+  }
+  .cal-more-title {
+    color: white;
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.25;
+    letter-spacing: -0.2px;
+  }
+  .cal-more-sub {
+    display: block;
+    margin-top: 2px;
+    color: rgba(255, 255, 255, 0.55);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0;
+  }
+  .cal-more-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    background: #851dd5;
+    border: 0.7px solid rgba(255, 255, 255, 0.18);
+    border-radius: 8px;
+    height: 30px;
+    padding: 0 12px;
+    color: white;
+    font-size: 11px; font-weight: 600;
+    letter-spacing: 0.1px;
+    align-self: flex-start;
+    transition: background 0.15s;
+  }
+  .cal-more-btn:hover { background: #7218be; }
+
+  /* ============================================================
+     Games Calendar — v2 polish
+     Opt-in via `.cal-v2` on the section. Remove the class to
+     restore the original calendar design above.
+     ============================================================ */
+  .cal-v2 .cal-day-grid {
+    grid-template-columns: repeat(2, 348px);
+    grid-auto-rows: 168px;
+    gap: 16px;
+    /* Reserve space for a full 2-row grid so days with fewer cards still
+       have a consistent bottom edge — the divider line below the grid stays
+       at the same vertical position regardless of card count. */
+    min-height: calc(168px * 2 + 16px);
+    align-content: start;
+  }
+
+  /* v2: card is now an <article> wrapper; the link is .cal-game-link, and
+     the wishlist button sits as a sibling so we don't nest interactives. */
+  .cal-v2 .cal-game {
+    position: relative;
+    display: block;
+    height: 168px;
+    border-radius: 14px;
+    background: #15151a;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    overflow: hidden;
+    isolation: isolate;
+    transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    will-change: transform;
+  }
+  .cal-v2 .cal-game:hover {
+    transform: translateY(-2px);
+    border-color: rgba(255, 255, 255, 0.12);
+    box-shadow: 0 14px 32px rgba(0, 0, 0, 0.5);
+  }
+  .cal-v2 .cal-game-link {
+    position: absolute; inset: 0;
+    display: block;
+    text-decoration: none; color: inherit;
+  }
+
+  .cal-v2 .cal-game-bg {
+    filter: saturate(1.05);
+  }
+  .cal-v2 .cal-game-shade {
+    background:
+      linear-gradient(180deg, rgba(8, 8, 12, 0.55) 0%, rgba(8, 8, 12, 0.92) 100%),
+      linear-gradient(90deg, rgba(8, 8, 12, 0.7) 0%, rgba(8, 8, 12, 0.4) 100%);
+  }
+
+  .cal-v2 .cal-game-inner {
+    padding: 16px;
+    gap: 16px;
+    align-items: flex-end;
+  }
+  .cal-v2 .cal-game-info {
+    justify-content: flex-end;
+    height: 100%;
+  }
+  /* Portrait 2:3 thumb sized to the inner content height of a 168px card
+     (168 − 16px padding × 2 = 136px). Width 92px keeps the SGDB 600×900 /
+     IGDB cover almost exactly 2:3, so there's effectively no crop. */
+  .cal-v2 .cal-game-cover {
+    width: 92px; height: 136px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.45);
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+  .cal-v2 .cal-game-cover img,
+  .cal-v2 .cal-game-cover .cover-fallback {
+    width: 100%; height: 100%;
+    object-fit: cover;
+    object-position: center;
+    display: block;
+  }
+  .cal-v2 .cal-game-info { gap: 10px; padding-right: 38px; }
+
+  .cal-v2 .cal-game-title {
+    font-size: 17px;
+    font-weight: 700;
+    line-height: 1.22;
+    letter-spacing: -0.15px;
+    -webkit-line-clamp: 2;
+  }
+
+  .cal-v2 .cal-game-plats {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 11.5px;
+    font-weight: 500;
+  }
+  .cal-v2 .cal-plat-icons { gap: 6px; }
+  .cal-v2 .cal-plat {
+    width: 15px; height: 15px;
+    color: rgba(255, 255, 255, 0.82);
+  }
+  .cal-v2 .cal-plat-more {
+    background: rgba(255, 255, 255, 0.9);
+    color: #111;
+    height: 15px; min-width: 18px;
+    border-radius: 3px;
+    font-size: 8.5px;
+  }
+  .cal-v2 .cal-plat-label { display: none; }
+
+  .cal-v2 .cal-game-tags { gap: 5px; }
+  .cal-v2 .cal-tag {
+    background: rgba(255, 255, 255, 0.07);
+    color: rgba(255, 255, 255, 0.86);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.55px;
+    padding: 5px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+  }
+
+  /* Wishlist (bookmark) button — top-right of every card */
+  .cal-v2 .cal-wishlist {
+    position: absolute;
+    top: 12px; right: 12px;
+    z-index: 3;
+    width: 34px; height: 34px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: rgba(8, 8, 12, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+    color: rgba(255, 255, 255, 0.92);
+    cursor: pointer;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+  }
+  .cal-v2 .cal-wishlist:hover {
+    background: rgba(133, 29, 213, 0.92);
+    border-color: rgba(255, 255, 255, 0.2);
+    transform: translateY(-1px);
+  }
+  .cal-v2 .cal-wishlist.is-active {
+    background: rgba(133, 29, 213, 1);
+    border-color: rgba(255, 255, 255, 0.22);
+  }
+  .cal-v2 .cal-wishlist.is-active svg path {
+    fill: currentColor;
+  }
+  .cal-v2 .cal-wishlist:focus-visible {
+    outline: 2px solid #a78bfa;
+    outline-offset: 2px;
+  }
+
+  /* "+N more" CTA card — match the v2 game-card surface */
+  .cal-v2 .cal-more {
+    height: 168px;
+    background: #15151a;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 14px;
+    padding: 16px;
+    gap: 16px;
+  }
+  .cal-v2 .cal-more:hover {
+    border-color: rgba(255, 255, 255, 0.12);
+    box-shadow: 0 14px 32px rgba(0, 0, 0, 0.5);
+  }
+  .cal-v2 .cal-more-thumbs { gap: 6px; }
+  .cal-v2 .cal-more-thumbs img,
+  .cal-v2 .cal-more-thumbs .cover-fallback {
+    width: 64px; height: 130px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .cal-v2 .cal-more-title {
+    font-size: 17px;
+    font-weight: 700;
+    line-height: 1.22;
+    letter-spacing: -0.15px;
+  }
+  .cal-v2 .cal-more-sub {
+    color: rgba(255, 255, 255, 0.55);
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .cal-v2 .cal-more-btn {
+    background: #851dd5;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 8px;
+    height: 34px;
+    padding: 0 16px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.1px;
+    box-shadow: 0 4px 12px rgba(133, 29, 213, 0.35);
+    transition: background 0.15s, box-shadow 0.15s;
+  }
+  .cal-v2 .cal-more-btn:hover {
+    background: #9528ee;
+    box-shadow: 0 6px 16px rgba(133, 29, 213, 0.5);
+  }
+
+  /* Cleaner day header */
+  .cal-v2 .cal-day-head { margin-bottom: 14px; }
+  .cal-v2 .cal-day-date {
+    color: white;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+  }
+  .cal-v2 .cal-day-meta {
+    color: rgba(255, 255, 255, 0.42);
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0;
+  }
+  .cal-v2 .cal-dot { padding: 0 1px; opacity: 0.6; }
+  .cal-v2 .cal-day-line {
+    background: rgba(255, 255, 255, 0.06);
+    margin-bottom: 14px;
+  }
+  .cal-v2 .cal-day-line--bottom {
+    margin-bottom: 0;
+    margin-top: 14px;
+  }
+
+  /* Browse Games based on — Figma node 100:4474 */
+  .cat-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+  }
+  .cat-card {
+    position: relative;
+    aspect-ratio: 360 / 223;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #1c1c1c;
+    text-decoration: none;
+    color: var(--text);
+    isolation: isolate;
+    display: block;
+    transition: transform 0.18s ease, box-shadow 0.18s ease;
+    will-change: transform;
+  }
+  .cat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 14px 30px rgba(0, 0, 0, 0.5);
+  }
+
+  /* 4 portrait covers as a flush strip across the top of the card. */
+  .cat-strip {
+    position: absolute; inset: 0;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    z-index: 0;
+  }
+  .cat-strip-cell {
+    position: relative;
+    overflow: hidden;
+    background: #111;
+  }
+  .cat-strip-cell img {
+    width: 100%; height: 100%;
+    object-fit: cover;
+    object-position: center;
+    display: block;
+  }
+  .cat-strip-empty {
+    background: linear-gradient(135deg, #1a1a1a, #131313);
+  }
+
+  /* Gradient overlay — translucent at top, solid black at ~62% down. */
+  .cat-shade {
+    position: absolute; inset: 0;
+    z-index: 1;
+    background: linear-gradient(178.98deg, rgba(0, 0, 0, 0.4) 1.43%, rgb(0, 0, 0) 62.7%);
+  }
+
+  /* Title + subtitle + Browse button, bottom-left. */
+  .cat-body {
+    position: absolute;
+    left: 20px; right: 20px; bottom: 18px;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .cat-body h4 {
+    margin: 0;
+    color: white;
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 1.4;
+  }
+  .cat-body p {
+    margin: 0;
+    color: rgba(255, 255, 255, 0.68);
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1.4;
+    letter-spacing: -0.42px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .cat-browse-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #851dd5;
+    border: 0.9px solid rgba(255, 255, 255, 0.18);
+    color: white;
+    padding: 9px 14px;
+    border-radius: 7.1px;
+    font-size: 14.2px;
+    font-weight: 600;
+    line-height: 1.4;
+    margin-top: 4px;
+    transition: background 0.15s ease, box-shadow 0.15s ease;
+  }
+  .cat-card:hover .cat-browse-btn {
+    background: #9528ee;
+    box-shadow: 0 6px 16px rgba(133, 29, 213, 0.45);
+  }
+
+  /* Footer */
+  .footer { background: var(--bg-2); border-top: 1px solid var(--border); padding: 2.5rem 2.5rem 2rem; }
+  .footer-inner {
+    max-width: 1240px; margin: 0 auto;
+    display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 2rem;
+  }
+  .foot-brand .brand { display: inline-flex; align-items: center; gap: 0.4rem; font-weight: 700; margin-bottom: 0.75rem; }
+  .foot-brand .logo { color: var(--accent-2); }
+  .foot-brand p { color: var(--muted); font-size: 0.82rem; line-height: 1.6; max-width: 38ch; margin: 0 0 0.6rem; }
+  .foot-brand .muted { font-size: 0.78rem; }
+  .foot-col h5 { margin: 0 0 0.9rem; font-size: 0.78rem; color: var(--muted); font-weight: 500; text-transform: uppercase; letter-spacing: 0.08em; }
+  .foot-col a { display: block; color: #b6bcc6; text-decoration: none; font-size: 0.85rem; margin-bottom: 0.55rem; }
+  .foot-col a:hover { color: var(--text); }
+
+  /* Responsive — desktop & down */
+  @media (max-width: 1100px) {
+    .cat-grid { grid-template-columns: repeat(2, 1fr); }
+    .thumb-strip { grid-template-columns: repeat(6, 1fr); }
+  }
+  @media (max-width: 900px) {
+    main { padding: 1.25rem 1.25rem 3rem; }
+    .hero-cover { width: 120px; height: 160px; }
+    .hero-logo { height: 42px; }
+    .cal-day-grid { grid-template-columns: 1fr; }
+    .cal-day-col { flex-basis: 348px; }
+    .thumb-strip { grid-template-columns: repeat(5, 1fr); }
+  }
+  @media (max-width: 640px) {
+    .cat-grid { grid-template-columns: 1fr; }
+    .hero-product { flex-direction: column; align-items: flex-start; }
+    .hero-stats { width: auto; flex-wrap: wrap; }
+    .footer-inner { grid-template-columns: 1fr; }
+    .thumb-strip { grid-template-columns: repeat(4, 1fr); }
+  }
+</style>
+
+<script>
+  type FeaturedPlatform = { key: string; label: string };
+  type FeaturedCard = {
+    igdb_id: number;
+    name: string;
+    slug: string;
+    cover_url: string | null;
+    background_url: string;
+    title_logo_url: string;
+    blurb: string;
+    rating: { value: string; source: string };
+    hltb: { value: string; label: string };
+    platforms: FeaturedPlatform[];
+    extra_platform_count: number;
+  };
+
+  const dataEl = document.querySelector<HTMLScriptElement>('script[data-featured-data]');
+  const carousel = document.querySelector<HTMLDivElement>('[data-featured-carousel]');
+  const hero = document.querySelector<HTMLElement>('[data-featured-hero]');
+
+  if (dataEl && carousel && hero) {
+    const list = JSON.parse(dataEl.textContent || '[]') as FeaturedCard[];
+    const rotateMs = Number(carousel.dataset.rotateMs || '8000');
+    carousel.style.setProperty('--rotate-duration', `${rotateMs}ms`);
+    const items = Array.from(carousel.querySelectorAll<HTMLButtonElement>('[data-carousel-item]'));
+    let activeIndex = 0;
+    let timer: number | undefined;
+
+    const heroLogo = hero.querySelector<HTMLImageElement>('[data-hero-logo]');
+    const heroName = hero.querySelector<HTMLElement>('[data-hero-name]');
+    const heroCover = hero.querySelector<HTMLImageElement>('[data-hero-cover]');
+    const heroBlurb = hero.querySelector<HTMLElement>('[data-hero-blurb]');
+    const heroRatingValue = hero.querySelector<HTMLElement>('[data-hero-rating-value]');
+    const heroRatingSource = hero.querySelector<HTMLElement>('[data-hero-rating-source]');
+    const heroHltbValue = hero.querySelector<HTMLElement>('[data-hero-hltb-value]');
+    const heroHltbLabel = hero.querySelector<HTMLElement>('[data-hero-hltb-label]');
+    const heroLink = hero.querySelector<HTMLAnchorElement>('[data-hero-link]');
+
+    function updateHero(card: FeaturedCard) {
+      hero!.style.backgroundImage = `url(${card.background_url})`;
+
+      if (card.title_logo_url) {
+        if (heroLogo) {
+          heroLogo.src = card.title_logo_url;
+          heroLogo.alt = card.name;
+          heroLogo.style.display = '';
+        }
+        if (heroName) heroName.style.display = 'none';
+      } else {
+        if (heroLogo) heroLogo.style.display = 'none';
+        if (heroName) {
+          heroName.textContent = card.name;
+          heroName.style.display = '';
+        }
+      }
+
+      if (heroCover && card.cover_url) {
+        heroCover.src = card.cover_url;
+        heroCover.alt = card.name;
+      }
+      if (heroBlurb) heroBlurb.textContent = card.blurb;
+      if (heroRatingValue) heroRatingValue.textContent = card.rating.value;
+      if (heroRatingSource) heroRatingSource.textContent = card.rating.source;
+      if (heroHltbValue) heroHltbValue.textContent = card.hltb.value;
+      if (heroHltbLabel) heroHltbLabel.textContent = card.hltb.label;
+      if (heroLink) heroLink.href = `/games/${card.igdb_id}`;
+    }
+
+    function setActive(next: number) {
+      const idx = ((next % list.length) + list.length) % list.length;
+      activeIndex = idx;
+      items.forEach((el, i) => {
+        const isActive = i === idx;
+        el.classList.toggle('active', isActive);
+        if (isActive) {
+          const bar = el.querySelector<HTMLElement>('.carousel-progress');
+          if (bar) {
+            bar.style.animation = 'none';
+            void bar.offsetWidth;
+            bar.style.animation = '';
+          }
+        }
+      });
+      updateHero(list[idx]);
+      restartTimer();
+    }
+
+    function restartTimer() {
+      if (timer !== undefined) window.clearTimeout(timer);
+      timer = window.setTimeout(() => setActive(activeIndex + 1), rotateMs);
+    }
+
+    items.forEach((el, i) => {
+      el.addEventListener('click', () => setActive(i));
+    });
+
+    restartTimer();
+
+    carousel.addEventListener('mouseenter', () => {
+      if (timer !== undefined) window.clearTimeout(timer);
+      const active = items[activeIndex]?.querySelector<HTMLElement>('.carousel-progress');
+      if (active) active.style.animationPlayState = 'paused';
+    });
+    carousel.addEventListener('mouseleave', () => {
+      const active = items[activeIndex]?.querySelector<HTMLElement>('.carousel-progress');
+      if (active) active.style.animationPlayState = 'running';
+      restartTimer();
+    });
+  }
+
+  // ─── Calendar wishlist toggle ───
+  // Currently a client-side toggle only; persistence (Supabase user_games row
+  // with status='wishlist') can be wired in later via a POST to the backend.
+  document.querySelectorAll<HTMLButtonElement>('[data-wishlist]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      btn.classList.toggle('is-active');
+    });
+  });
+
+  // ─── Games Calendar prev/next scroll ───
+  const calScroll = document.querySelector<HTMLDivElement>('[data-cal-scroll]');
+  const calPrev = document.querySelector<HTMLButtonElement>('[data-cal-prev]');
+  const calNext = document.querySelector<HTMLButtonElement>('[data-cal-next]');
+  if (calScroll && calPrev && calNext) {
+    const step = () => calScroll.clientWidth * 0.85;
+    calPrev.addEventListener('click', () => calScroll.scrollBy({ left: -step(), behavior: 'smooth' }));
+    calNext.addEventListener('click', () => calScroll.scrollBy({ left: step(), behavior: 'smooth' }));
+  }
+</script>

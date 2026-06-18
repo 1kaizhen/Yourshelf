@@ -79,6 +79,128 @@ export async function fetchDiscover(params: DiscoverParams = {}): Promise<GameLi
   }
 }
 
+export type FeaturedPlatform = {
+  key: 'windows' | 'playstation' | 'xbox' | 'switch' | 'mac';
+  label: string;
+};
+
+export type FeaturedCard = {
+  igdb_id: number;
+  name: string;
+  slug: string;
+  cover_url: string | null;
+  background_url: string;
+  title_logo_url: string;
+  blurb: string;
+  rating: { value: string; source: string };
+  hltb: { value: string; label: string };
+  platforms: FeaturedPlatform[];
+  extra_platform_count: number;
+};
+
+export async function fetchFeatured(): Promise<FeaturedCard | null> {
+  const url = `${API_BASE}/api/featured`;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const { featured } = (await res.json()) as { featured: FeaturedCard };
+    return featured;
+  } catch {
+    return null;
+  }
+}
+
+export type EnrichedCard = GameLite & {
+  rating: number | null;
+  rating_count: number | null;
+  genres: string[];
+  hours: number | null;
+};
+
+export async function fetchNewest(limit = 6): Promise<EnrichedCard[]> {
+  try {
+    const res = await fetch(`${API_BASE}/api/newest?limit=${limit}`);
+    if (!res.ok) return [];
+    const { cards } = (await res.json()) as { cards: EnrichedCard[] };
+    return cards;
+  } catch {
+    return [];
+  }
+}
+
+export type BrowseCategory = {
+  id: string;
+  title: string;
+  subtitle: string;
+  href: string;
+  covers: string[];
+};
+
+export async function fetchBrowseCategories(): Promise<BrowseCategory[]> {
+  try {
+    const res = await fetch(`${API_BASE}/api/browse-categories`);
+    if (!res.ok) return [];
+    const { categories } = (await res.json()) as { categories: BrowseCategory[] };
+    return categories;
+  } catch {
+    return [];
+  }
+}
+
+export type CalendarGame = {
+  igdb_id: number;
+  name: string;
+  slug: string;
+  cover_url: string | null;
+  hero_url: string | null;
+  year: number | null;
+  release_date: string;
+  genres: string[];
+};
+
+export type CalendarDay = {
+  date: string;
+  day: number;
+  month: string;
+  weekday: string;
+  games: CalendarGame[];
+};
+
+export async function fetchCalendar(days = 21): Promise<CalendarDay[]> {
+  try {
+    const res = await fetch(`${API_BASE}/api/calendar?days=${days}`);
+    if (!res.ok) return [];
+    const { calendar } = (await res.json()) as { calendar: CalendarDay[] };
+    return calendar;
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchCardsByIds(ids: number[]): Promise<EnrichedCard[]> {
+  if (ids.length === 0) return [];
+  try {
+    const res = await fetch(`${API_BASE}/api/cards?ids=${ids.join(',')}`);
+    if (!res.ok) return [];
+    const { cards } = (await res.json()) as { cards: EnrichedCard[] };
+    return cards;
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchFeaturedList(): Promise<FeaturedCard[]> {
+  const url = `${API_BASE}/api/featured/list`;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return [];
+    const { featured } = (await res.json()) as { featured: FeaturedCard[] };
+    return featured;
+  } catch {
+    return [];
+  }
+}
+
 export type PeoplesChoiceEntry = GameLite & { avg_rating: number; tracker_count: number };
 
 export async function fetchPeoplesChoice(limit = 12): Promise<PeoplesChoiceEntry[]> {
