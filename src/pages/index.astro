@@ -2,7 +2,7 @@
 import Layout from '../layouts/Layout.astro';
 import Nav from '../components/Nav.astro';
 import CardRowSection from '../components/CardRowSection.astro';
-import { fetchDiscover, fetchGameDetail, fetchFeaturedList, fetchNewest, fetchCardsByIds, fetchCalendar, fetchBrowseCategories, fetchFreeGames, type GameDetail, type GameLite } from '../lib/api';
+import { fetchDiscover, fetchGameDetail, fetchFeaturedRandom, fetchNewest, fetchCardsByIds, fetchCalendar, fetchBrowseCategories, fetchFreeGames, fetchCoverByName, type GameDetail, type GameLite } from '../lib/api';
 
 const { supabase, user } = Astro.locals;
 
@@ -23,7 +23,10 @@ if (user) {
 const [topRated, shortGames, featuredList, newestCards, myGameCards, calendarDays, browseCats, freeGames] = await Promise.all([
   fetchDiscover({ sort: 'rating', limit: 12 }),
   fetchDiscover({ maxHours: 8, sort: 'rating', limit: 12 }),
-  fetchFeaturedList(),
+  // Randomize on every SSR so a reload pulls a fresh 7 from the same pool the
+  // dice button uses — otherwise the first card is always pinned to the top
+  // of /api/featured/list.
+  fetchFeaturedRandom(7),
   // Backend computes "newest popular" with proper date filter (last 2 years
   // through 90 days out, cover required, ≥5 ratings) — see getNewestPopular.
   fetchNewest(6),
@@ -73,8 +76,52 @@ function hoursOf(g: GameLite): number | null {
 // date-sorted. Empty days are pre-filtered server-side.
 const calendarCols = calendarDays;
 
-// Browse categories come from the backend (each carries its top-4 cover URLs).
-const categories = browseCats;
+// Browse categories come from the backend (each carries its top-4 cover URLs),
+// but we hand-curate the cover strip for known categories so the visual is
+// stable across reloads instead of shifting with backend ranking. Match by
+// lowercased title substring to stay resilient to backend id changes.
+const CATEGORY_COVER_GAMES: Array<{ match: (title: string) => boolean; names: string[] }> = [
+  {
+    match: (t) => t.includes('story'),
+    names: ['Marvel\'s Spider-Man', 'Ghost of Tsushima', 'The Last of Us'],
+  },
+  {
+    match: (t) => t.includes('shoot'),
+    names: ['Call of Duty', 'Battlefield', 'Doom'],
+  },
+  {
+    match: (t) => t.includes('jrpg'),
+    names: ['Persona 5', 'Final Fantasy VII Remake', 'Metaphor: ReFantazio'],
+  },
+  {
+    match: (t) => t.includes('platform'),
+    names: ['Hollow Knight', 'Mio: Memories in Orbit', 'Nine Sols'],
+  },
+  {
+    match: (t) => t.includes('short'),
+    names: ['Firewatch', 'Dispatch', 'Marvel\'s Spider-Man: Miles Morales'],
+  },
+];
+
+// "Top 100" gets the actual top 3 by rating from /api/discover.
+const top100Covers = topRated
+  .slice(0, 3)
+  .map((g) => g.cover_url)
+  .filter((u): u is string => !!u);
+
+const categories = await Promise.all(
+  browseCats.map(async (c) => {
+    const title = c.title.toLowerCase();
+    if (title.includes('top 100') || title.includes('top-100')) {
+      return top100Covers.length === 3 ? { ...c, covers: top100Covers } : c;
+    }
+    const override = CATEGORY_COVER_GAMES.find((o) => o.match(title));
+    if (!override) return c;
+    const resolved = await Promise.all(override.names.map(fetchCoverByName));
+    const covers = resolved.filter((u): u is string => !!u);
+    return covers.length ? { ...c, covers } : c;
+  })
+);
 ---
 
 <Layout>
@@ -215,12 +262,12 @@ const categories = browseCats;
           {categories.map((c) => (
             <a class="cat-card" href={c.href}>
               <div class="cat-strip" aria-hidden="true">
-                {c.covers.slice(0, 4).map((url) => (
+                {c.covers.slice(0, 3).map((url) => (
                   <div class="cat-strip-cell">
                     <img src={url} alt="" loading="lazy" />
                   </div>
                 ))}
-                {c.covers.length < 4 && Array.from({ length: 4 - c.covers.length }).map(() => (
+                {c.covers.length < 3 && Array.from({ length: 3 - c.covers.length }).map(() => (
                   <div class="cat-strip-cell cat-strip-empty"></div>
                 ))}
               </div>
@@ -458,6 +505,33 @@ const categories = browseCats;
     background-size: cover; background-position: center;
     height: 420px;
   }
+  /* Skeleton state while a new featured card is preloading. The overlay
+     shimmer sits above the (possibly stale) background and hides hero-content
+     until every image is in cache, then we swap in one frame. */
+  .hero.is-loading .hero-content { opacity: 0; transition: opacity 0.15s ease; }
+  .hero.is-loading::after {
+    content: '';
+    position: absolute; inset: 0;
+    z-index: 2;
+    background:
+      linear-gradient(
+        100deg,
+        rgba(20, 23, 29, 0.95) 0%,
+        rgba(30, 34, 42, 0.95) 40%,
+        rgba(48, 54, 66, 0.95) 50%,
+        rgba(30, 34, 42, 0.95) 60%,
+        rgba(20, 23, 29, 0.95) 100%
+      );
+    background-size: 200% 100%;
+    animation: hero-shimmer 1.2s linear infinite;
+    border-radius: 24px;
+    pointer-events: none;
+  }
+  @keyframes hero-shimmer {
+    0%   { background-position: 100% 0; }
+    100% { background-position: -100% 0; }
+  }
+  .hero:not(.is-loading) .hero-content { opacity: 1; transition: opacity 0.2s ease; }
   .hero-overlay {
     position: absolute; inset: 0;
     background: rgba(0, 0, 0, 0.47);
@@ -488,6 +562,12 @@ const categories = browseCats;
     margin: 0; max-width: 328px;
     font-weight: 600; font-size: 12px; line-height: 1.4;
     letter-spacing: -0.36px; color: rgba(255, 255, 255, 0.87);
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .hero-stats { display: flex; gap: 16px; align-items: center; width: 328px; }
   .stat {
@@ -539,6 +619,31 @@ const categories = browseCats;
   .carousel {
     display: flex; gap: 12px; align-items: center;
     margin-top: 12px;
+  }
+  /* Skeleton state — while a randomize reroll is preloading, hide the thumb
+     images and overlay a shimmer on every carousel item. Cleared once all
+     hero + carousel assets have fully downloaded. */
+  .carousel.is-loading .carousel-item { pointer-events: none; }
+  .carousel.is-loading .carousel-cover,
+  .carousel.is-loading .carousel-art,
+  .carousel.is-loading .carousel-label,
+  .carousel.is-loading .carousel-shade { opacity: 0; }
+  .carousel.is-loading .carousel-item::after {
+    content: '';
+    position: absolute; inset: 0;
+    background:
+      linear-gradient(
+        100deg,
+        rgba(20, 23, 29, 0.95) 0%,
+        rgba(30, 34, 42, 0.95) 40%,
+        rgba(48, 54, 66, 0.95) 50%,
+        rgba(30, 34, 42, 0.95) 60%,
+        rgba(20, 23, 29, 0.95) 100%
+      );
+    background-size: 200% 100%;
+    animation: hero-shimmer 1.2s linear infinite;
+    border-radius: inherit;
+    pointer-events: none;
   }
   .carousel-item {
     position: relative;
@@ -1169,11 +1274,11 @@ const categories = browseCats;
     box-shadow: 0 14px 30px rgba(0, 0, 0, 0.5);
   }
 
-  /* 4 portrait covers as a flush strip across the top of the card. */
+  /* 3 portrait covers as a flush strip across the top of the card. */
   .cat-strip {
     position: absolute; inset: 0;
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     z-index: 0;
   }
   .cat-strip-cell {
@@ -1321,7 +1426,35 @@ const categories = browseCats;
     const heroHltbLabel = hero.querySelector<HTMLElement>('[data-hero-hltb-label]');
     const heroLink = hero.querySelector<HTMLAnchorElement>('[data-hero-link]');
 
-    function updateHero(card: FeaturedCard) {
+    // Preload an image and resolve once it's loaded (or errored — we don't
+    // want a single dead URL to block the hero swap forever).
+    const preloadImage = (url: string | null | undefined): Promise<void> => {
+      if (!url) return Promise.resolve();
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => resolve();
+        img.onerror = () => resolve();
+        img.src = url;
+      });
+    };
+
+    // Monotonic token so a stale slow-loading hero never overwrites a newer one.
+    let heroLoadToken = 0;
+
+    async function updateHero(card: FeaturedCard) {
+      const token = ++heroLoadToken;
+      hero!.classList.add('is-loading');
+
+      // Wait for ALL hero-visible images to finish downloading before swapping.
+      await Promise.all([
+        preloadImage(card.background_url),
+        preloadImage(card.cover_url),
+        preloadImage(card.title_logo_url),
+      ]);
+
+      // A newer hero change started while we were loading — bail.
+      if (token !== heroLoadToken) return;
+
       hero!.style.backgroundImage = `url(${card.background_url})`;
 
       if (card.title_logo_url) {
@@ -1349,6 +1482,8 @@ const categories = browseCats;
       if (heroHltbValue) heroHltbValue.textContent = card.hltb.value;
       if (heroHltbLabel) heroHltbLabel.textContent = card.hltb.label;
       if (heroLink) heroLink.href = `/games/${card.igdb_id}`;
+
+      hero!.classList.remove('is-loading');
     }
 
     function setActive(next: number) {
@@ -1446,16 +1581,51 @@ const categories = browseCats;
       const API_BASE = import.meta.env.PUBLIC_API_URL;
       randomBtn.addEventListener('click', async () => {
         if (randomBtn.classList.contains('is-loading')) return;
+
+        // Show skeletons IMMEDIATELY — before the network request — so the
+        // user sees feedback the instant they click.
         randomBtn.classList.add('is-loading');
+        hero!.classList.add('is-loading');
+        carousel!.classList.add('is-loading');
+        // Pause the auto-rotate timer while we wait so it doesn't fire and
+        // call updateHero against stale data mid-reroll.
+        if (timer !== undefined) window.clearTimeout(timer);
+
+        let rebuilt = false;
         try {
           const res = await fetch(`${API_BASE}/api/featured/random?count=7`);
           if (!res.ok) return;
           const { featured } = (await res.json()) as { featured: FeaturedCard[] };
-          if (featured && featured.length) rebuildCarousel(featured);
+          if (!featured || !featured.length) return;
+
+          // Preload EVERY image used by the hero + carousel (background,
+          // cover, logo for all 7 cards). Skeleton stays up until they're all
+          // in the browser cache, so the swap is instant with no late-load
+          // pop-in. No timeout — we wait for real completion.
+          const urls = new Set<string>();
+          for (const g of featured) {
+            if (g.background_url) urls.add(g.background_url);
+            if (g.cover_url) urls.add(g.cover_url);
+            if (g.title_logo_url) urls.add(g.title_logo_url);
+          }
+          await Promise.all(Array.from(urls).map(preloadImage));
+
+          rebuildCarousel(featured);
+          rebuilt = true;
         } catch {
           // Swallow — keep the existing list on failure.
         } finally {
           randomBtn.classList.remove('is-loading');
+          carousel!.classList.remove('is-loading');
+          // On success, updateHero (kicked off by rebuildCarousel) re-adds
+          // is-loading synchronously and clears it after its own preload
+          // resolves — so we must NOT touch it here. On any failure path,
+          // updateHero never runs, so clear it ourselves and restart the
+          // auto-rotate timer that we paused on click.
+          if (!rebuilt) {
+            hero!.classList.remove('is-loading');
+            restartTimer();
+          }
         }
       });
     }

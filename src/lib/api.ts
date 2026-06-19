@@ -255,6 +255,19 @@ export async function fetchPeoplesChoice(limit = 12): Promise<PeoplesChoiceEntry
   }
 }
 
+// Pick the first /api/search hit for a name and return its cover URL.
+// Used for hand-curated category cover overrides on the homepage.
+export async function fetchCoverByName(name: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(name)}`);
+    if (!res.ok) return null;
+    const { results } = (await res.json()) as { results: GameLite[] };
+    return results[0]?.cover_url ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchGamesByIds(ids: number[]): Promise<Map<number, GameLite>> {
   if (ids.length === 0) return new Map();
   const results = await Promise.all(
