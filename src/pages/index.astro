@@ -2,7 +2,7 @@
 import Layout from '../layouts/Layout.astro';
 import Nav from '../components/Nav.astro';
 import CardRowSection from '../components/CardRowSection.astro';
-import { fetchDiscover, fetchGameDetail, fetchFeaturedList, fetchNewest, fetchCardsByIds, fetchCalendar, fetchBrowseCategories, type GameDetail, type GameLite } from '../lib/api';
+import { fetchDiscover, fetchGameDetail, fetchFeaturedList, fetchNewest, fetchCardsByIds, fetchCalendar, fetchBrowseCategories, fetchFreeGames, type GameDetail, type GameLite } from '../lib/api';
 
 const { supabase, user } = Astro.locals;
 
@@ -20,7 +20,7 @@ if (user) {
   myGameIds = (rows ?? []).map((r) => r.igdb_id as number);
 }
 
-const [topRated, shortGames, featuredList, newestCards, myGameCards, calendarDays, browseCats] = await Promise.all([
+const [topRated, shortGames, featuredList, newestCards, myGameCards, calendarDays, browseCats, freeGames] = await Promise.all([
   fetchDiscover({ sort: 'rating', limit: 12 }),
   fetchDiscover({ maxHours: 8, sort: 'rating', limit: 12 }),
   fetchFeaturedList(),
@@ -33,6 +33,7 @@ const [topRated, shortGames, featuredList, newestCards, myGameCards, calendarDay
   fetchCalendar(30),
   // Browse categories — backend returns title/subtitle/href + top-4 covers.
   fetchBrowseCategories(),
+  fetchFreeGames(6),
 ]);
 
 // Fallback to top-rated when the user is logged out or has an empty library.
@@ -84,9 +85,16 @@ const categories = browseCats;
       <section class="section">
         <header class="section-head">
           <h2>Top Recommendation</h2>
-          <button class="ghost-btn" type="button">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 113 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-            Customize Layout
+          <button class="cal-view-all" type="button" data-featured-randomize>
+            <svg class="dice-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <rect x="3" y="3" width="18" height="18" rx="3" stroke="currentColor" stroke-width="1.8"/>
+              <circle cx="8" cy="8" r="1.4" fill="currentColor"/>
+              <circle cx="16" cy="8" r="1.4" fill="currentColor"/>
+              <circle cx="12" cy="12" r="1.4" fill="currentColor"/>
+              <circle cx="8" cy="16" r="1.4" fill="currentColor"/>
+              <circle cx="16" cy="16" r="1.4" fill="currentColor"/>
+            </svg>
+            Randomize
           </button>
         </header>
 
@@ -198,6 +206,35 @@ const categories = browseCats;
         items={myGamesRow}
       />
 
+      <!-- Browse Games based on -->
+      <section class="section">
+        <header class="section-head">
+          <h2>Browse Games based on</h2>
+        </header>
+        <div class="cat-grid">
+          {categories.map((c) => (
+            <a class="cat-card" href={c.href}>
+              <div class="cat-strip" aria-hidden="true">
+                {c.covers.slice(0, 4).map((url) => (
+                  <div class="cat-strip-cell">
+                    <img src={url} alt="" loading="lazy" />
+                  </div>
+                ))}
+                {c.covers.length < 4 && Array.from({ length: 4 - c.covers.length }).map(() => (
+                  <div class="cat-strip-cell cat-strip-empty"></div>
+                ))}
+              </div>
+              <div class="cat-shade" aria-hidden="true"></div>
+              <div class="cat-body">
+                <h4>{c.title}</h4>
+                <p>{c.subtitle}</p>
+                <span class="cat-browse-btn">Browse</span>
+              </div>
+            </a>
+          ))}
+        </div>
+      </section>
+
       <!-- Newest Games -->
       <CardRowSection
         title="Newest Games"
@@ -235,11 +272,13 @@ const categories = browseCats;
         <div class="cal-scroll-wrap">
           <div class="cal-scroll" data-cal-scroll>
             {calendarCols.map((col) => {
-              const display = col.games.slice(0, 3);
-              const overflow = col.games.length - display.length;
+              const total = col.games.length;
+              // ≤4 games: show all cards (no +more). >4 games: show 3 + a "+N more" card.
+              const display = total > 4 ? col.games.slice(0, 3) : col.games.slice(0, 4);
+              const overflow = total - display.length;
               const monthNice = col.month.charAt(0) + col.month.slice(1).toLowerCase();
               return (
-                <div class="cal-day-col">
+                <div class="cal-day-col" data-count={total}>
                   <div class="cal-day-head">
                     <div class="cal-day-date">{col.day} {col.month}</div>
                     <div class="cal-day-meta">
@@ -321,40 +360,20 @@ const categories = browseCats;
         </div>
       </section>
 
-      <!-- Browse Games based on -->
-      <section class="section">
-        <header class="section-head">
-          <h2>Browse Games based on</h2>
-        </header>
-        <div class="cat-grid">
-          {categories.map((c) => (
-            <a class="cat-card" href={c.href}>
-              <div class="cat-strip" aria-hidden="true">
-                {c.covers.slice(0, 4).map((url) => (
-                  <div class="cat-strip-cell">
-                    <img src={url} alt="" loading="lazy" />
-                  </div>
-                ))}
-                {c.covers.length < 4 && Array.from({ length: 4 - c.covers.length }).map(() => (
-                  <div class="cat-strip-cell cat-strip-empty"></div>
-                ))}
-              </div>
-              <div class="cat-shade" aria-hidden="true"></div>
-              <div class="cat-body">
-                <h4>{c.title}</h4>
-                <p>{c.subtitle}</p>
-                <span class="cat-browse-btn">Browse</span>
-              </div>
-            </a>
-          ))}
-        </div>
-      </section>
-
       <!-- Today's Free Game list -->
       <CardRowSection
         title="Today's Free Game list"
         href="/browse"
-        items={shortGames.slice(0, 6).map((g) => ({ ...g, rating: ratingOf(g), genres: genresOf(g), hours: hoursOf(g) }))}
+        items={freeGames.map((fg) => ({
+          igdb_id: fg.id,
+          name: fg.title,
+          slug: '',
+          cover_url: fg.thumbnail || fg.image,
+          year: null,
+          genres: fg.platforms?.slice(0, 3) ?? [],
+          worth: fg.worth && fg.worth !== 'N/A' ? fg.worth : null,
+          href: fg.url,
+        }))}
       />
     </main>
 
@@ -408,9 +427,9 @@ const categories = browseCats;
 
 <style>
   .page { min-height: 100vh; display: flex; flex-direction: column; }
-  main { flex: 1; max-width: 1240px; margin: 0 auto; width: 100%; padding: 1.5rem 2.5rem 4rem; }
+  main { flex: 1; max-width: 1240px; margin: 0 auto; width: 100%; padding: 72px 2.5rem 4rem; }
 
-  .section { margin-bottom: 2.75rem; }
+  .section { margin-bottom: 72px; }
   .section-head {
     display: flex; justify-content: space-between; align-items: center;
     margin-bottom: 1rem; gap: 1rem;
@@ -651,6 +670,15 @@ const categories = browseCats;
     transition: color 0.15s, border-color 0.15s;
   }
   .cal-view-all:hover { color: white; border-color: rgba(255, 255, 255, 0.3); }
+  [data-featured-randomize] { cursor: pointer; }
+  [data-featured-randomize] .dice-icon { transition: transform 0.4s ease; }
+  [data-featured-randomize]:hover .dice-icon { transform: rotate(-15deg); }
+  [data-featured-randomize].is-loading .dice-icon { animation: dice-spin 0.6s linear infinite; }
+  [data-featured-randomize].is-loading { opacity: 0.7; pointer-events: none; }
+  @keyframes dice-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
 
   .cal-scroll-wrap { position: relative; }
   .cal-scroll {
@@ -888,6 +916,22 @@ const categories = browseCats;
        at the same vertical position regardless of card count. */
     min-height: calc(168px * 2 + 16px);
     align-content: start;
+  }
+
+  /* Compact day columns: 1 game → single card, 2 games → stacked vertically.
+     Shrinks the column itself to half-width so empty space doesn't linger. */
+  .cal-v2 .cal-day-col[data-count="1"],
+  .cal-v2 .cal-day-col[data-count="2"] {
+    flex-basis: 348px;
+  }
+  .cal-v2 .cal-day-col[data-count="1"] .cal-day-grid,
+  .cal-v2 .cal-day-col[data-count="2"] .cal-day-grid {
+    grid-template-columns: 348px;
+  }
+  .cal-v2 .cal-day-col[data-count="1"] .cal-day-grid {
+    /* Keep the same overall column height as multi-game days so the bottom
+       divider doesn't hug a single card. */
+    min-height: calc(168px * 2 + 16px);
   }
 
   /* v2: card is now an <article> wrapper; the link is .cal-game-link, and
@@ -1260,10 +1304,10 @@ const categories = browseCats;
   const hero = document.querySelector<HTMLElement>('[data-featured-hero]');
 
   if (dataEl && carousel && hero) {
-    const list = JSON.parse(dataEl.textContent || '[]') as FeaturedCard[];
+    let list = JSON.parse(dataEl.textContent || '[]') as FeaturedCard[];
     const rotateMs = Number(carousel.dataset.rotateMs || '8000');
     carousel.style.setProperty('--rotate-duration', `${rotateMs}ms`);
-    const items = Array.from(carousel.querySelectorAll<HTMLButtonElement>('[data-carousel-item]'));
+    let items = Array.from(carousel.querySelectorAll<HTMLButtonElement>('[data-carousel-item]'));
     let activeIndex = 0;
     let timer: number | undefined;
 
@@ -1331,9 +1375,57 @@ const categories = browseCats;
       timer = window.setTimeout(() => setActive(activeIndex + 1), rotateMs);
     }
 
-    items.forEach((el, i) => {
-      el.addEventListener('click', () => setActive(i));
-    });
+    function bindItemClicks() {
+      items.forEach((el, i) => {
+        el.addEventListener('click', () => setActive(i));
+      });
+    }
+
+    // Update an existing carousel item's content in-place. This preserves the
+    // Astro scoped CSS attribute (data-astro-cid-...) that's set on the
+    // server-rendered nodes — recreating via createElement would lose it and
+    // every scoped rule (display, active state, label visibility) would break.
+    function updateCarouselItem(btn: HTMLButtonElement, g: FeaturedCard) {
+      btn.setAttribute('aria-label', g.name);
+
+      const cover = btn.querySelector<HTMLImageElement>('.carousel-cover');
+      if (cover && g.cover_url) cover.src = g.cover_url;
+      const art = btn.querySelector<HTMLImageElement>('.carousel-art');
+      if (art && g.background_url) art.src = g.background_url;
+
+      const labelEl = btn.querySelector<HTMLElement>('.carousel-label');
+      if (labelEl) {
+        const logo = labelEl.querySelector<HTMLImageElement>('.carousel-logo');
+        const nameSpan = labelEl.querySelector<HTMLElement>('.carousel-name');
+        if (g.title_logo_url) {
+          if (logo) {
+            logo.src = g.title_logo_url;
+            logo.alt = g.name;
+            logo.style.display = '';
+          }
+          if (nameSpan) nameSpan.style.display = 'none';
+        } else {
+          if (logo) logo.style.display = 'none';
+          if (nameSpan) {
+            nameSpan.textContent = g.name;
+            nameSpan.style.display = '';
+          }
+        }
+      }
+    }
+
+    function rebuildCarousel(newList: FeaturedCard[]) {
+      list = newList;
+      const count = Math.min(items.length, newList.length);
+      for (let i = 0; i < count; i++) updateCarouselItem(items[i], newList[i]);
+      // If the new list is shorter, hide any extra items; if longer, ignore the tail.
+      for (let i = count; i < items.length; i++) items[i].style.display = 'none';
+      for (let i = 0; i < count; i++) items[i].style.display = '';
+      activeIndex = -1; // Force updateHero to run inside setActive even when index is 0.
+      setActive(0);
+    }
+
+    bindItemClicks();
 
     restartTimer();
 
@@ -1347,6 +1439,26 @@ const categories = browseCats;
       if (active) active.style.animationPlayState = 'running';
       restartTimer();
     });
+
+    // ─── Randomize button: reroll Top Recommendations ───
+    const randomBtn = document.querySelector<HTMLButtonElement>('[data-featured-randomize]');
+    if (randomBtn) {
+      const API_BASE = import.meta.env.PUBLIC_API_URL;
+      randomBtn.addEventListener('click', async () => {
+        if (randomBtn.classList.contains('is-loading')) return;
+        randomBtn.classList.add('is-loading');
+        try {
+          const res = await fetch(`${API_BASE}/api/featured/random?count=7`);
+          if (!res.ok) return;
+          const { featured } = (await res.json()) as { featured: FeaturedCard[] };
+          if (featured && featured.length) rebuildCarousel(featured);
+        } catch {
+          // Swallow — keep the existing list on failure.
+        } finally {
+          randomBtn.classList.remove('is-loading');
+        }
+      });
+    }
   }
 
   // ─── Calendar wishlist toggle ───
@@ -1365,8 +1477,27 @@ const categories = browseCats;
   const calPrev = document.querySelector<HTMLButtonElement>('[data-cal-prev]');
   const calNext = document.querySelector<HTMLButtonElement>('[data-cal-next]');
   if (calScroll && calPrev && calNext) {
-    const step = () => calScroll.clientWidth * 0.85;
-    calPrev.addEventListener('click', () => calScroll.scrollBy({ left: -step(), behavior: 'smooth' }));
-    calNext.addEventListener('click', () => calScroll.scrollBy({ left: step(), behavior: 'smooth' }));
+    // Advance one day-column at a time so the leftmost visible card just
+    // shifts by one — not by a viewport width.
+    const cols = () => Array.from(calScroll.querySelectorAll<HTMLElement>('.cal-day-col'));
+    const scrollToCol = (i: number) => {
+      const list = cols();
+      if (list.length === 0) return;
+      const target = list[Math.max(0, Math.min(list.length - 1, i))];
+      calScroll.scrollTo({ left: target.offsetLeft - calScroll.offsetLeft, behavior: 'smooth' });
+    };
+    const currentIndex = () => {
+      const list = cols();
+      const left = calScroll.scrollLeft;
+      let best = 0;
+      let bestDist = Infinity;
+      list.forEach((el, i) => {
+        const d = Math.abs(el.offsetLeft - calScroll.offsetLeft - left);
+        if (d < bestDist) { bestDist = d; best = i; }
+      });
+      return best;
+    };
+    calPrev.addEventListener('click', () => scrollToCol(currentIndex() - 1));
+    calNext.addEventListener('click', () => scrollToCol(currentIndex() + 1));
   }
 </script>

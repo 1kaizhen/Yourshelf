@@ -128,6 +128,30 @@ export async function fetchNewest(limit = 6): Promise<EnrichedCard[]> {
   }
 }
 
+export type FreeGiveaway = {
+  id: number;
+  title: string;
+  worth: string;
+  thumbnail: string;
+  image: string;
+  description: string;
+  url: string;
+  platforms: string[];
+  end_date: string | null;
+};
+
+export async function fetchFreeGames(limit = 6): Promise<FreeGiveaway[]> {
+  try {
+    const res = await fetch(`${API_BASE}/api/free-games?limit=${limit}`);
+    if (!res.ok) return [];
+    const body = (await res.json()) as { results?: FreeGiveaway[]; cards?: FreeGiveaway[]; games?: FreeGiveaway[] };
+    const list = body.results ?? body.cards ?? body.games ?? [];
+    return list.slice(0, limit);
+  } catch {
+    return [];
+  }
+}
+
 export type BrowseCategory = {
   id: string;
   title: string;
@@ -191,6 +215,18 @@ export async function fetchCardsByIds(ids: number[]): Promise<EnrichedCard[]> {
 
 export async function fetchFeaturedList(): Promise<FeaturedCard[]> {
   const url = `${API_BASE}/api/featured/list`;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return [];
+    const { featured } = (await res.json()) as { featured: FeaturedCard[] };
+    return featured;
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchFeaturedRandom(count = 7): Promise<FeaturedCard[]> {
+  const url = `${API_BASE}/api/featured/random?count=${count}`;
   try {
     const res = await fetch(url);
     if (!res.ok) return [];

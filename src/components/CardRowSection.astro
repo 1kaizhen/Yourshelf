@@ -5,6 +5,8 @@ type CardItem = GameLite & {
   rating?: number | null;
   genres?: string[];
   hours?: number | null;
+  href?: string;
+  worth?: string | null;
 };
 
 interface Props {
@@ -25,38 +27,50 @@ const { title, items } = Astro.props;
     <p class="empty">Nothing here yet.</p>
   ) : (
     <ul class="grid">
-      {items.map((g) => (
-        <li>
-          <a class="card" href={`/games/${g.igdb_id}`}>
-            <div class="cover">
-              {g.cover_url ? (
-                <img src={g.cover_url} alt={g.name} loading="lazy" />
-              ) : (
-                <div class="fallback"></div>
-              )}
-            </div>
-            <div class="meta">
-              <div class="text">
-                {g.rating != null && (
-                  <div class="rating">{g.rating.toFixed(1)}/10 Rating</div>
+      {items.map((g) => {
+        const isExternal = !!g.href;
+        const linkHref = g.href ?? `/games/${g.igdb_id}`;
+        return (
+          <li>
+            <a
+              class="card"
+              href={linkHref}
+              target={isExternal ? '_blank' : undefined}
+              rel={isExternal ? 'noopener noreferrer' : undefined}
+            >
+              <div class="cover">
+                {g.cover_url ? (
+                  <img src={g.cover_url} alt={g.name} loading="lazy" />
+                ) : (
+                  <div class="fallback"></div>
                 )}
-                <div class="name">{g.name}</div>
               </div>
-              {g.genres && g.genres.length > 0 && (
-                <div class="tags">
-                  {g.genres.slice(0, 4).map((t) => <span class="tag">{t}</span>)}
+              <div class="meta">
+                <div class="text">
+                  {g.rating != null && (
+                    <div class="rating">{g.rating.toFixed(1)}/10 Rating</div>
+                  )}
+                  {g.worth && (
+                    <div class="rating">Worth {g.worth}</div>
+                  )}
+                  <div class="name">{g.name}</div>
                 </div>
-              )}
-            </div>
-          </a>
-        </li>
-      ))}
+                {g.genres && g.genres.length > 0 && (
+                  <div class="tags">
+                    {g.genres.slice(0, 4).map((t) => <span class="tag">{t}</span>)}
+                  </div>
+                )}
+              </div>
+            </a>
+          </li>
+        );
+      })}
     </ul>
   )}
 </section>
 
 <style>
-  .section { margin-bottom: 2.75rem; }
+  .section { margin-bottom: 72px; }
   .section-head { margin-bottom: 14px; }
   .section-head h2 {
     margin: 0;
