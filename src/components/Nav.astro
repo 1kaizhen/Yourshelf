@@ -1,4 +1,5 @@
 ---
+import SearchModal from './SearchModal.astro';
 const { user } = Astro.locals;
 const path = Astro.url.pathname;
 const isHome = path === '/';
@@ -16,18 +17,19 @@ const initial = (user?.email ?? 'G').charAt(0).toUpperCase();
   </a>
 
   {isHome ? (
-    <form class="search" action="/search" method="get" role="search">
+    <button class="search" type="button" data-open-search aria-label="Open search">
       <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
         <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/>
         <path d="M20 20l-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
       </svg>
-      <input type="search" name="q" placeholder="Search for game titles, studio names..." autocomplete="off" />
-    </form>
+      <span class="search-placeholder">Search for game titles, studio names...</span>
+      <kbd class="search-kbd">Ctrl K</kbd>
+    </button>
   ) : (
     <div class="links">
       <a href="/" class={path === '/' ? 'active' : ''}>Discover</a>
       <a href="/browse" class={path.startsWith('/browse') ? 'active' : ''}>Browse</a>
-      <a href="/search" class={path.startsWith('/search') ? 'active' : ''}>Search</a>
+      <button type="button" data-open-search class={`link-btn${path.startsWith('/search') ? ' active' : ''}`}>Search</button>
     </div>
   )}
 
@@ -43,6 +45,8 @@ const initial = (user?.email ?? 'G').charAt(0).toUpperCase();
   </div>
   </div>
 </nav>
+
+<SearchModal />
 
 <style>
   .topbar {
@@ -67,22 +71,31 @@ const initial = (user?.email ?? 'G').charAt(0).toUpperCase();
   .search {
     justify-self: end;
     position: relative;
-    display: flex; align-items: center;
+    display: flex; align-items: center; gap: 0.5rem;
     background: #15181f; border: 1px solid #20242c; border-radius: 999px;
-    padding: 0.55rem 1rem 0.55rem 2.25rem;
-    width: min(360px, 100%);
+    padding: 0.55rem 0.55rem 0.55rem 2.25rem;
+    width: min(420px, 100%);
+    color: #6b7280; cursor: pointer; font: inherit;
+    text-align: left;
     transition: border-color 0.15s;
   }
-  .search:focus-within { border-color: #6366f1; }
+  .search:hover, .search:focus { border-color: #2a3038; outline: none; }
   .search-icon { position: absolute; left: 0.9rem; color: #6b7280; }
-  .search input {
-    background: transparent; border: 0; outline: 0;
-    color: #e6e8eb; font: inherit; font-size: 0.82rem; width: 100%;
+  .search-placeholder {
+    flex: 1; font-size: 0.82rem; color: #6b7280;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .search input::placeholder { color: #6b7280; }
-  .links { display: flex; gap: 1.25rem; justify-self: end; }
-  .links a { color: #9aa3ad; text-decoration: none; font-size: 0.88rem; }
-  .links a:hover, .links a.active { color: #e6e8eb; }
+  .search-kbd {
+    background: #0e1014; border: 1px solid #20242c; color: #9aa3ad;
+    padding: 0.15rem 0.45rem; border-radius: 6px;
+    font-size: 0.7rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .links { display: flex; gap: 1.25rem; justify-self: end; align-items: center; }
+  .links a, .link-btn {
+    color: #9aa3ad; text-decoration: none; font-size: 0.88rem;
+    background: transparent; border: 0; padding: 0; cursor: pointer; font: inherit;
+  }
+  .links a:hover, .links a.active, .link-btn:hover, .link-btn.active { color: #e6e8eb; }
   .account { display: flex; align-items: center; gap: 1rem; }
   .quiet { color: #9aa3ad; text-decoration: none; font-size: 0.85rem; }
   .quiet:hover { color: #e6e8eb; }
@@ -103,7 +116,7 @@ const initial = (user?.email ?? 'G').charAt(0).toUpperCase();
     .search { width: 100%; }
   }
   @media (max-width: 640px) {
-    .search input::placeholder { content: 'Search...'; }
     .brand-text { display: none; }
+    .search-kbd { display: none; }
   }
 </style>

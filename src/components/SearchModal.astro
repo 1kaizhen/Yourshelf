@@ -1,0 +1,498 @@
+---
+import { fetchDiscover } from '../lib/api';
+
+const recommended = await fetchDiscover({ sort: 'rating', limit: 12 });
+const trending = await fetchDiscover({ sort: 'rating', limit: 8 });
+
+const recommendedJson = JSON.stringify(recommended);
+const trendingJson = JSON.stringify(trending);
+
+const categories = [
+  { key: 'rating', label: 'Trending Game' },
+  { key: 'release_date', label: 'Newest Games' },
+  { key: 'story', label: 'Story Driven Games' },
+  { key: 'adventure', label: 'Adventure Games' },
+  { key: 'shooter', label: 'Shooter Games' },
+];
+---
+
+<div class="sm-overlay" id="searchModal" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Search games">
+  <div class="sm-backdrop" data-close></div>
+  <div class="sm-panel">
+    <div class="sm-head">
+      <div class="sm-input-wrap">
+        <svg class="sm-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/>
+          <path d="M20 20l-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <input
+          type="search"
+          id="searchModalInput"
+          placeholder="Search your Games & DLC..."
+          autocomplete="off"
+          spellcheck="false"
+        />
+      </div>
+      <div class="sm-kbd">Ctrl + K</div>
+    </div>
+
+    <div class="sm-body">
+      <aside class="sm-side">
+        {categories.map((c, i) => (
+          <button class={`sm-side-item${i === 0 ? ' active' : ''}`} data-cat={c.key} type="button">
+            <svg class="sm-side-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <path d="M3 17l6-6 4 4 7-8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M14 7h6v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span>{c.label}</span>
+          </button>
+        ))}
+      </aside>
+
+      <div class="sm-main">
+        <section class="sm-section" id="searchThumbRow">
+          <div class="sm-section-head">
+            <h3>Recommended Games</h3>
+          </div>
+          <div class="sm-thumb-wrap">
+            <button class="sm-arrow" type="button" data-thumb-prev aria-label="Previous">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <div class="sm-thumb-strip" id="searchThumbStrip"></div>
+            <button class="sm-arrow" type="button" data-thumb-next aria-label="Next">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+          </div>
+        </section>
+
+        <section class="sm-section sm-trend">
+          <div class="sm-section-head">
+            <h3 id="searchTrendTitle">Trending Games</h3>
+          </div>
+          <div class="sm-card-grid" id="searchTrendGrid"></div>
+        </section>
+
+        <section class="sm-section" id="searchResultsRow" hidden>
+          <div class="sm-section-head">
+            <h3 id="searchResultsTitle">Results</h3>
+          </div>
+          <div class="sm-card-grid" id="searchResultsGrid"></div>
+          <p class="sm-hint" id="searchHint"></p>
+        </section>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script is:inline define:vars={{ recommendedJson, trendingJson, apiBase: import.meta.env.PUBLIC_API_URL }}>
+  (function () {
+    const modal = document.getElementById('searchModal');
+    if (!modal) return;
+    const input = document.getElementById('searchModalInput');
+    const thumbStrip = document.getElementById('searchThumbStrip');
+    const trendGrid = document.getElementById('searchTrendGrid');
+    const trendTitle = document.getElementById('searchTrendTitle');
+    const trendSection = modal.querySelector('.sm-trend');
+    const thumbSection = document.getElementById('searchThumbRow');
+    const resultsSection = document.getElementById('searchResultsRow');
+    const resultsGrid = document.getElementById('searchResultsGrid');
+    const resultsTitle = document.getElementById('searchResultsTitle');
+    const hint = document.getElementById('searchHint');
+    const sideButtons = modal.querySelectorAll('.sm-side-item');
+    const thumbPrev = modal.querySelector('[data-thumb-prev]');
+    const thumbNext = modal.querySelector('[data-thumb-next]');
+
+    const recommended = JSON.parse(recommendedJson);
+    const trending = JSON.parse(trendingJson);
+
+    function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]); }
+
+    function thumbHTML(g) {
+      const img = g.cover_url
+        ? `<img src="${g.cover_url}" alt="" loading="lazy" />`
+        : `<div class="sm-ph"></div>`;
+      return `<a class="sm-thumb" href="/games/${g.igdb_id}" title="${esc(g.name)}">${img}</a>`;
+    }
+
+    function ratingLabel(g) {
+      if (g.rating) return `${(Math.round(g.rating) / 10).toFixed(1)}/10 Rating`;
+      if (g.year) return `${g.year}`;
+      return '';
+    }
+
+    function cardHTML(g) {
+      const img = g.cover_url
+        ? `<img src="${g.cover_url}" alt="" loading="lazy" />`
+        : `<div class="sm-ph"></div>`;
+      return `<a class="sm-card" href="/games/${g.igdb_id}">
+        <div class="sm-card-cover">${img}</div>
+        <div class="sm-card-meta">
+          <div class="sm-card-rating">${esc(ratingLabel(g))}</div>
+          <div class="sm-card-name">${esc(g.name)}</div>
+        </div>
+      </a>`;
+    }
+
+    thumbStrip.innerHTML = recommended.map(thumbHTML).join('');
+    trendGrid.innerHTML = trending.slice(0, 4).map(cardHTML).join('');
+
+    thumbPrev?.addEventListener('click', () => { thumbStrip.scrollBy({ left: -240, behavior: 'smooth' }); });
+    thumbNext?.addEventListener('click', () => { thumbStrip.scrollBy({ left: 240, behavior: 'smooth' }); });
+
+    function open() {
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      setTimeout(() => input.focus(), 30);
+    }
+    function close() {
+      modal.setAttribute('aria-hidden', 'true');
+      document.body.style.overflow = '';
+      input.value = '';
+      showDefault();
+    }
+    function showDefault() {
+      resultsSection.hidden = true;
+      thumbSection.hidden = false;
+      trendSection.hidden = false;
+      hint.textContent = '';
+    }
+    function showResults() {
+      resultsSection.hidden = false;
+      thumbSection.hidden = true;
+      trendSection.hidden = true;
+    }
+
+    modal.addEventListener('click', (e) => {
+      if (e.target.matches('[data-close]')) close();
+    });
+
+    document.addEventListener('keydown', (e) => {
+      const isMac = navigator.platform.toLowerCase().includes('mac');
+      if ((isMac ? e.metaKey : e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        open();
+      }
+      if (e.key === 'Escape' && modal.getAttribute('aria-hidden') === 'false') {
+        close();
+      }
+    });
+
+    document.querySelectorAll('[data-open-search]').forEach((el) => {
+      el.addEventListener('click', (e) => {
+        e.preventDefault();
+        open();
+      });
+    });
+
+    let ctrl = null;
+    let timer = null;
+    input.addEventListener('input', () => {
+      const q = input.value.trim();
+      if (timer) clearTimeout(timer);
+      if (ctrl) ctrl.abort();
+      if (!q) { showDefault(); return; }
+      hint.textContent = 'Searching…';
+      showResults();
+      resultsTitle.textContent = `Results for "${q}"`;
+      timer = setTimeout(async () => {
+        ctrl = new AbortController();
+        try {
+          const res = await fetch(`${apiBase}/api/search?q=${encodeURIComponent(q)}`, { signal: ctrl.signal });
+          if (!res.ok) throw new Error('search failed');
+          const data = await res.json();
+          const items = data.results || [];
+          if (items.length === 0) {
+            resultsGrid.innerHTML = '';
+            hint.textContent = 'No matches.';
+          } else {
+            resultsGrid.innerHTML = items.slice(0, 12).map(cardHTML).join('');
+            hint.textContent = items.length > 12 ? `Showing 12 of ${items.length}. Press Enter to see all.` : '';
+          }
+        } catch (err) {
+          if (err.name !== 'AbortError') hint.textContent = 'Search failed';
+        }
+      }, 250);
+    });
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        const q = input.value.trim();
+        if (q) window.location.href = `/search?q=${encodeURIComponent(q)}`;
+      }
+    });
+
+    sideButtons.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        sideButtons.forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        const cat = btn.dataset.cat;
+        const label = btn.textContent.trim();
+        trendTitle.textContent = label.replace(/Game$/, 'Games');
+        showDefault();
+        const params = new URLSearchParams();
+        if (cat === 'rating' || cat === 'release_date') params.set('sort', cat);
+        else if (cat === 'story' || cat === 'adventure' || cat === 'shooter') params.set('genre', cat);
+        params.set('limit', '8');
+        fetch(`${apiBase}/api/discover?${params.toString()}`)
+          .then((r) => r.ok ? r.json() : { results: [] })
+          .then((d) => {
+            trendGrid.innerHTML = (d.results || []).slice(0, 4).map(cardHTML).join('');
+          })
+          .catch(() => {});
+      });
+    });
+  })();
+</script>
+
+<style is:global>
+  /* Overlay & backdrop */
+  .sm-overlay {
+    position: fixed; inset: 0; z-index: 1000;
+    display: none;
+    align-items: flex-start; justify-content: center;
+    padding-top: 5rem;
+    font-family: 'Urbanist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+  .sm-overlay[aria-hidden='false'] { display: flex; }
+  .sm-backdrop {
+    position: absolute; inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+
+  /* Panel — matches Figma: bg #191919, radius 29.079px */
+  .sm-panel {
+    position: relative;
+    width: min(72rem, calc(100% - 3rem));
+    max-height: calc(100vh - 7rem);
+    background: #191919;
+    border-radius: 29.079px;
+    overflow: hidden;
+    display: flex; flex-direction: column;
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
+  }
+
+  /* Head — pt 24 pb 20 px 24, border-bottom 0.08 white */
+  .sm-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 24px 24px 20px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    flex-shrink: 0;
+  }
+  .sm-input-wrap {
+    flex: 1;
+    display: flex; align-items: center; gap: 8px;
+    min-width: 0;
+  }
+  .sm-icon { color: rgba(255, 255, 255, 0.26); flex-shrink: 0; }
+  #searchModalInput {
+    flex: 1; min-width: 0;
+    background: transparent; border: 0; outline: 0;
+    color: #fff;
+    font-family: inherit;
+    font-weight: 600; /* Urbanist SemiBold */
+    font-size: 14px;
+    letter-spacing: -0.56px;
+  }
+  #searchModalInput::placeholder {
+    color: rgba(255, 255, 255, 0.26);
+    font-weight: 600;
+  }
+  .sm-kbd {
+    background: #2c2c2c;
+    width: 52px;
+    padding: 8px;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff;
+    font-weight: 700;
+    font-size: 12px;
+    letter-spacing: -0.48px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  /* Body: 2-column */
+  .sm-body {
+    display: flex;
+    flex: 1; min-height: 0;
+  }
+
+  /* Sidebar — 192px, border-right 0.08, padding 16px 12px, gap 4px */
+  .sm-side {
+    width: 192px;
+    flex-shrink: 0;
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 16px 12px;
+    display: flex; flex-direction: column; gap: 4px;
+    overflow-y: auto;
+  }
+  .sm-side-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px; border-radius: 8px;
+    background: transparent; border: 0;
+    color: rgba(255, 255, 255, 0.44);
+    font-family: inherit;
+    font-weight: 500; /* Medium */
+    font-size: 14px;
+    letter-spacing: -0.42px;
+    text-align: left;
+    cursor: pointer;
+    width: 100%;
+    white-space: nowrap;
+  }
+  .sm-side-item:hover { color: rgba(255, 255, 255, 0.7); }
+  .sm-side-item.active {
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.85);
+    font-weight: 600; /* SemiBold */
+  }
+  .sm-side-icon { flex-shrink: 0; }
+
+  /* Main — flex column, gap 24, padding 16 */
+  .sm-main {
+    flex: 1; min-width: 0;
+    padding: 16px;
+    display: flex; flex-direction: column; gap: 24px;
+    overflow-y: auto;
+  }
+
+  /* Section — gap 8, full width */
+  .sm-section {
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .sm-section-head {
+    display: flex; align-items: center; justify-content: center;
+    padding: 8px 0;
+  }
+  .sm-section-head h3 {
+    margin: 0;
+    flex: 1;
+    color: #fff;
+    font-family: inherit;
+    font-weight: 700; /* Bold */
+    font-size: 14px;
+    letter-spacing: -0.56px;
+  }
+
+  /* Thumb row — gap 10, items 70x70 with arrow buttons */
+  .sm-thumb-wrap {
+    display: flex; gap: 10px; align-items: stretch;
+    width: 100%;
+  }
+  .sm-arrow {
+    flex: 1; min-width: 0;
+    background: #242424;
+    border: 0; border-radius: 4px;
+    color: #fff;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    align-self: stretch;
+  }
+  .sm-arrow:hover { background: #2e2e2e; }
+  .sm-thumb-strip {
+    display: flex; gap: 10px;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+  }
+  .sm-thumb-strip::-webkit-scrollbar { display: none; }
+  .sm-thumb {
+    flex: 0 0 110px;
+    width: 110px; aspect-ratio: 3 / 4;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #242424;
+    scroll-snap-align: start;
+    display: block;
+    transition: transform 0.15s, outline 0.15s;
+    outline: 1px solid transparent;
+  }
+  .sm-thumb:hover { outline-color: rgba(255, 255, 255, 0.2); }
+  .sm-thumb img, .sm-thumb .sm-ph {
+    width: 100%; height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  /* Card grid — 4 per row, gap 16 */
+  .sm-card-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+  }
+  .sm-card {
+    display: flex; flex-direction: column; gap: 8px;
+    text-decoration: none; color: inherit;
+    min-width: 0;
+    transition: transform 0.15s;
+  }
+  .sm-card:hover { transform: translateY(-2px); }
+  .sm-card-cover {
+    width: 100%;
+    aspect-ratio: 3 / 4;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #242424;
+  }
+  .sm-card-cover img, .sm-card-cover .sm-ph {
+    width: 100%; height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .sm-card-meta {
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .sm-card-rating {
+    font-family: inherit;
+    font-weight: 500; /* Medium */
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.66);
+    line-height: 1.4;
+  }
+  .sm-card-name {
+    font-family: inherit;
+    font-weight: 700; /* Bold */
+    font-size: 14px;
+    color: #fff;
+    letter-spacing: -0.42px;
+    line-height: 1.4;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+
+  .sm-section[hidden] { display: none !important; }
+
+  .sm-hint {
+    color: rgba(255, 255, 255, 0.44);
+    font-size: 13px;
+    margin: 4px 0 0;
+  }
+
+  @media (max-width: 800px) {
+    .sm-overlay { padding-top: 2.5rem; }
+    .sm-panel {
+      width: calc(100% - 1rem);
+      border-radius: 20px;
+    }
+    .sm-body { flex-direction: column; }
+    .sm-side {
+      width: 100%;
+      flex-direction: row;
+      border-right: 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      overflow-x: auto;
+      padding: 12px;
+    }
+    .sm-side-item { width: auto; flex-shrink: 0; }
+    .sm-card-grid { grid-template-columns: repeat(2, 1fr); }
+    .sm-arrow { display: none; }
+  }
+</style>

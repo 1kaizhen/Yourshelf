@@ -13,14 +13,82 @@ export type GameRelation = { igdb_id: number; name: string };
 export type HltbTimes = {
   main?: number | null;
   main_extra?: number | null;
+  mainExtra?: number | null;
   completionist?: number | null;
 } | null;
 
+export type Screenshot = { id: number; url: string; url_hd: string };
+export type Artwork = Screenshot;
+export type GameVideo = {
+  id: number;
+  name: string | null;
+  video_id: string;
+  youtube_url: string;
+  thumbnail_url: string;
+};
+export type Platform = {
+  id: number;
+  name: string;
+  abbreviation: string | null;
+  slug: string;
+  logo_url: string | null;
+  category: number | string | null;
+};
+export type ReleaseDate = {
+  id: number;
+  platform_id: number;
+  platform_name: string | null;
+  date: string | null;
+  human: string | null;
+  region: string | number | null;
+  y: number | null;
+  m: number | null;
+};
+export type NamedRef = { id: number; name: string };
+export type Language = { id: number; name: string; native_name: string | null; locale: string | null };
+export type LanguageSupport = { language: Language; supports: string[] };
+export type AgeRating = {
+  id?: number;
+  rating: string | number | null;
+  synopsis?: string | null;
+  content_descriptions?: string[];
+};
+export type Website = {
+  id: number;
+  category: string | number | null;
+  url: string;
+  trusted: boolean;
+};
+export type InvolvedCompany = {
+  company: { id: number; name: string; slug: string; logo_url: string | null };
+  developer: boolean;
+  publisher: boolean;
+  porting: boolean;
+  supporting: boolean;
+};
+export type ExternalGame = {
+  category: string | number | null;
+  uid: string;
+  url: string | null;
+};
+export type FranchiseRef = { id: number; name: string; slug: string };
+
 export type GameDetail = GameLite & {
   summary: string | null;
+  storyline: string | null;
   release_date: string | null;
   rating: number | null;
   rating_count: number | null;
+  aggregated_rating: number | null;
+  aggregated_rating_count: number | null;
+  total_rating: number | null;
+  total_rating_count: number | null;
+  category: number | null;
+  category_label: string | null;
+  status: number | null;
+  status_label: string | null;
+  cover_url_hd: string | null;
+  logo_url: string | null;
   genres: string[];
   developers: Company[];
   publishers: Company[];
@@ -28,9 +96,31 @@ export type GameDetail = GameLite & {
   expansions: GameRelation[];
   remakes: GameRelation[];
   remasters: GameRelation[];
+  bundles: GameLite[];
+  similar_games: GameLite[];
+  parent_game: GameLite | null;
+  version_parent: GameLite | null;
   franchise_id: number | null;
   collection_id: number | null;
+  franchises: FranchiseRef[];
+  collections: FranchiseRef[];
   hltb: HltbTimes;
+  screenshots: Screenshot[];
+  artworks: Artwork[];
+  videos: GameVideo[];
+  platforms: Platform[];
+  release_dates: ReleaseDate[];
+  game_modes: NamedRef[];
+  themes: NamedRef[];
+  player_perspectives: NamedRef[];
+  keywords: NamedRef[];
+  game_engines: NamedRef[];
+  multiplayer_modes: unknown[];
+  language_supports: LanguageSupport[];
+  esrb: AgeRating | null;
+  websites: Website[];
+  involved_companies: InvolvedCompany[];
+  external_games: ExternalGame[];
 };
 
 export async function fetchGameDetail(id: number): Promise<GameDetail | null> {

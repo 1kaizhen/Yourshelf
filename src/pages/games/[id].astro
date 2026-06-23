@@ -27,9 +27,128 @@ if (user) {
 const releaseDate = game.release_date
   ? new Date(game.release_date).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
   : null;
-const rating = game.rating ? Math.round(game.rating) : null;
+
+const userScore = game.rating != null ? Math.round(game.rating) / 10 : null;
 const seriesOthers = series.filter((s) => s.igdb_id !== game.igdb_id);
 const redirectTo = `/games/${game.igdb_id}`;
+
+const hltbMain = game.hltb?.main ?? null;
+const hltbCompletionist = game.hltb?.completionist ?? null;
+const hltbExtra = game.hltb?.main_extra ?? game.hltb?.mainExtra ?? null;
+
+const backdrop = game.artworks?.[0]?.url_hd || game.screenshots?.[0]?.url_hd || null;
+const featuredTrailer = game.videos?.[0] ?? null;
+
+const releaseDateShort = game.release_date
+  ? new Date(game.release_date).toLocaleDateString('en-GB', { year: 'numeric', month: 'short', day: '2-digit' })
+  : null;
+
+const igdbRating = game.rating != null ? (Math.round(game.rating) / 10).toFixed(1) : null;
+const aggRating = game.aggregated_rating != null ? (Math.round(game.aggregated_rating) / 10).toFixed(1) : null;
+
+// Dedupe platforms by name
+const platformsSeen = new Set<string>();
+const platforms = (game.platforms ?? []).filter((p) => {
+  if (platformsSeen.has(p.name)) return false;
+  platformsSeen.add(p.name);
+  return true;
+});
+
+// Credits groupings
+const involved = game.involved_companies ?? [];
+const developers: string[] = [];
+const publishers: string[] = [];
+for (const ic of involved) {
+  if (ic.developer) developers.push(ic.company.name);
+  if (ic.publisher) publishers.push(ic.company.name);
+}
+if (involved.length === 0) {
+  for (const d of game.developers ?? []) developers.push(d.name);
+  for (const p of game.publishers ?? []) publishers.push(p.name);
+}
+
+const primaryDeveloper = developers[0] ?? null;
+
+type PlatformFamily = { key: string; icon: string | null; label: string };
+function platformFamily(p: { name: string; slug: string; abbreviation: string | null }): PlatformFamily {
+  const s = `${p.name} ${p.slug} ${p.abbreviation ?? ''}`.toLowerCase();
+  if (/playstation|\bps[0-9]|psp|vita/.test(s)) return { key: 'playstation', icon: '/icons/platform-playstation.svg', label: 'PlayStation' };
+  if (/xbox/.test(s)) return { key: 'xbox', icon: '/icons/platform-xbox.svg', label: 'Xbox' };
+  if (/windows|microsoft windows|\bpc\b/.test(s)) return { key: 'windows', icon: '/icons/platform-windows.svg', label: 'Windows' };
+  if (/switch|nintendo/.test(s)) return { key: 'nintendo', icon: null, label: 'Nintendo' };
+  if (/mac|os x/.test(s)) return { key: 'mac', icon: null, label: 'Mac' };
+  if (/linux/.test(s)) return { key: 'linux', icon: null, label: 'Linux' };
+  if (/ios|iphone|ipad/.test(s)) return { key: 'ios', icon: null, label: 'iOS' };
+  if (/android/.test(s)) return { key: 'android', icon: null, label: 'Android' };
+  return { key: p.slug || p.name, icon: null, label: p.abbreviation || p.name };
+}
+
+const platformFamiliesSeen = new Set<string>();
+const heroPlatformFamilies: PlatformFamily[] = [];
+for (const p of platforms) {
+  const fam = platformFamily(p);
+  if (platformFamiliesSeen.has(fam.key)) continue;
+  platformFamiliesSeen.add(fam.key);
+  heroPlatformFamilies.push(fam);
+}
+const heroPlatforms = heroPlatformFamilies.slice(0, 3);
+const extraPlatformsCount = Math.max(0, heroPlatformFamilies.length - heroPlatforms.length);
+
+const socialMatchers: { key: string; label: string; tests: RegExp[] }[] = [
+  { key: 'youtube', label: 'Youtube', tests: [/youtube\.com|youtu\.be/i] },
+  { key: 'instagram', label: 'Instagram', tests: [/instagram\.com/i] },
+  { key: 'twitter', label: 'Twitter', tests: [/twitter\.com|x\.com/i] },
+  { key: 'twitch', label: 'Twitch', tests: [/twitch\.tv/i] },
+  { key: 'facebook', label: 'Facebook', tests: [/facebook\.com/i] },
+  { key: 'reddit', label: 'Reddit', tests: [/reddit\.com/i] },
+  { key: 'discord', label: 'Discord', tests: [/discord/i] },
+];
+type Social = { key: string; label: string; url: string };
+const socialsMap = new Map<string, Social>();
+for (const w of game.websites ?? []) {
+  for (const m of socialMatchers) {
+    if (m.tests.some((re) => re.test(w.url)) && !socialsMap.has(m.key)) {
+      socialsMap.set(m.key, { key: m.key, label: m.label, url: w.url });
+    }
+  }
+}
+const socialsList = Array.from(socialsMap.values());
+const topSocials = socialsList.slice(0, 3);
+const moreSocialsCount = Math.max(0, socialsList.length - 3);
+
+// Useful links (Where to Buy + general)
+function hostnameOf(u: string): string {
+  try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return u; }
+}
+
+const storeMatchers: { key: 'steam' | 'epic' | 'xbox' | 'playstation' | 'gog' | 'nintendo'; label: string; tests: RegExp[] }[] = [
+  { key: 'steam', label: 'Steam', tests: [/store\.steampowered/i, /steamcommunity/i] },
+  { key: 'epic', label: 'Epic Games', tests: [/epicgames/i] },
+  { key: 'xbox', label: 'Xbox', tests: [/xbox\.com/i, /microsoft\.com\/(?:.*\/)?p\//i] },
+  { key: 'playstation', label: 'PlayStation', tests: [/playstation\.com/i, /store\.playstation/i] },
+  { key: 'gog', label: 'GOG', tests: [/gog\.com/i] },
+  { key: 'nintendo', label: 'Nintendo', tests: [/nintendo\.com/i] },
+];
+
+type StoreLink = { key: string; label: string; url: string };
+const storeLinksMap = new Map<string, StoreLink>();
+const externalUrls = [
+  ...((game.external_games ?? []).map((e) => e.url).filter((u): u is string => !!u)),
+  ...((game.websites ?? []).map((w) => w.url)),
+];
+for (const url of externalUrls) {
+  for (const m of storeMatchers) {
+    if (m.tests.some((re) => re.test(url)) && !storeLinksMap.has(m.key)) {
+      storeLinksMap.set(m.key, { key: m.key, label: m.label, url });
+    }
+  }
+}
+const storeLinks = Array.from(storeLinksMap.values());
+
+const otherLinks = [
+  ...((game.external_games ?? []).filter((e) => e.url).map((e) => ({ url: e.url as string, label: hostnameOf(e.url as string) }))),
+  ...((game.websites ?? []).map((w) => ({ url: w.url, label: hostnameOf(w.url) }))),
+].filter((l, i, arr) => arr.findIndex((x) => x.url === l.url) === i && !storeLinksMap.has(l.label));
 
 const STATUSES = [
   { value: 'wishlist', label: 'Wishlist' },
@@ -38,225 +157,1706 @@ const STATUSES = [
   { value: 'completed', label: 'Completed' },
   { value: 'dropped', label: 'Dropped' },
 ];
+
+const primaryAgeRating = game.esrb && (game.esrb.rating || game.esrb.synopsis) ? game.esrb : null;
+
+const ESRB_LABELS: Record<string, { code: string; label: string }> = {
+  '1': { code: 'RP', label: 'Rating Pending' },
+  '2': { code: 'EC', label: 'Early Childhood' },
+  '3': { code: 'E', label: 'Everyone' },
+  '4': { code: 'E10+', label: 'Everyone 10+' },
+  '5': { code: 'T', label: 'Teen' },
+  '6': { code: 'M', label: 'Mature 17+' },
+  '7': { code: 'AO', label: 'Adults Only 18+' },
+  RP: { code: 'RP', label: 'Rating Pending' },
+  EC: { code: 'EC', label: 'Early Childhood' },
+  E: { code: 'E', label: 'Everyone' },
+  'E10+': { code: 'E10+', label: 'Everyone 10+' },
+  T: { code: 'T', label: 'Teen' },
+  M: { code: 'M', label: 'Mature 17+' },
+  AO: { code: 'AO', label: 'Adults Only 18+' },
+};
+const esrbInfo = primaryAgeRating?.rating != null
+  ? ESRB_LABELS[String(primaryAgeRating.rating).trim()] ?? { code: String(primaryAgeRating.rating), label: String(primaryAgeRating.rating) }
+  : null;
+const AGE_IMAGE_FILES: Record<string, string> = {
+  RP: 'RP.svg',
+  E: 'E.svg',
+  'E10+': 'E10plus.svg',
+  T: 'T.svg',
+  M: 'M.svg',
+  AO: 'AO.svg',
+};
+const ageImage = esrbInfo?.code && AGE_IMAGE_FILES[esrbInfo.code]
+  ? `/age-ratings/${AGE_IMAGE_FILES[esrbInfo.code]}`
+  : null;
+
+const screenshots = game.screenshots ?? [];
+
+// Languages
+const languageNames = Array.from(new Set((game.language_supports ?? []).map((l) => l.language.name)));
+
+// Tabs of related content
+type TabKey = 'similar' | 'addon' | 'extra';
+const expansionsList = (game.expansions ?? []) as { igdb_id: number; name: string }[];
+const dlcList = (game.dlcs ?? []) as { igdb_id: number; name: string }[];
+const remakesList = (game.remakes ?? []) as { igdb_id: number; name: string }[];
+const remastersList = (game.remasters ?? []) as { igdb_id: number; name: string }[];
+type ExtraEntry = { igdb_id: number; name: string; cover_url?: string | null };
+const bundlesList: ExtraEntry[] = (game.bundles ?? []).map((b) => ({ igdb_id: b.igdb_id, name: b.name, cover_url: b.cover_url }));
+
+const similarGames = (game.similar_games ?? []).slice(0, 8);
+const addonGames = expansionsList;
+const extraGames: ExtraEntry[] = [...dlcList, ...remakesList, ...remastersList, ...bundlesList];
+
+const tabs: { key: TabKey; label: string; count: number }[] = [
+  { key: 'similar', label: 'Similar Games', count: similarGames.length },
+  { key: 'addon', label: 'Add On', count: addonGames.length },
+  { key: 'extra', label: 'Extra/ DLC', count: extraGames.length },
+];
+
+// Map simple system spec rows (real IGDB has no system-requirements data,
+// so we fall back to a friendly summary built from what we do have).
+const specRows: { label: string; icon: string; iconSize: number; min: string; rec: string }[] = [
+  {
+    label: 'Operating System',
+    icon: '/icons/specs/os.svg',
+    iconSize: 24,
+    min: platforms.find((p) => /pc \(microsoft windows\)/i.test(p.name)) ? 'Windows 10, 64-bit' : (platforms[0]?.name ?? '—'),
+    rec: platforms.find((p) => /pc \(microsoft windows\)/i.test(p.name)) ? 'Windows 11, 64-bit' : (platforms[0]?.name ?? '—'),
+  },
+  { label: 'Processor', icon: '/icons/specs/Processor.svg', iconSize: 30, min: 'Intel Core i5-9500 / AMD Ryzen 5 3500', rec: 'Intel Core i5-13500 / AMD Ryzen 5 7600' },
+  { label: 'Memory', icon: '/icons/specs/Memory.svg', iconSize: 30, min: '16 GB RAM', rec: '16 GB RAM' },
+  { label: 'Graphics', icon: '/icons/specs/Graphics.svg', iconSize: 30, min: 'NVIDIA GTX 1660 / AMD RX 5700', rec: 'NVIDIA RTX 3060 Ti / AMD RX 6700 XT' },
+  { label: 'Storage', icon: '/icons/specs/Storage.svg', iconSize: 30, min: '80 GB available space', rec: '80 GB available space (SSD)' },
+];
+
+function ratingForCard(r: number | null | undefined): string | null {
+  if (r == null) return null;
+  return (Math.round(r) / 10).toFixed(1);
+}
 ---
 
 <Layout>
   <div class="page">
     <Nav />
 
-    <main class="container">
-      <header class="hero">
-        {game.cover_url ? (
-          <img src={game.cover_url} alt={`${game.name} cover`} class="cover" />
-        ) : (
-          <div class="cover placeholder" />
-        )}
-        <div class="hero-text">
-          <h1>{game.name}</h1>
-          {releaseDate && <p class="muted">{releaseDate}</p>}
-          <div class="tags">
-            {game.genres.map((g) => <span class="tag">{g}</span>)}
-          </div>
-          {rating !== null && (
-            <p class="rating">
-              <strong>{rating}</strong>/100
-              {game.rating_count && <span class="muted small"> · {game.rating_count} ratings</span>}
-            </p>
+    <!-- HERO -->
+    <section class="gd-hero">
+      {backdrop && <img class="gd-hero-bg" src={backdrop} alt="" aria-hidden="true" />}
+      <div class="gd-hero-shade-bottom" aria-hidden="true"></div>
+      <div class="gd-hero-shade-left" aria-hidden="true"></div>
+      <div class="gd-hero-shade-right" aria-hidden="true"></div>
+
+      <div class="gd-hero-wrap">
+        <div class="gd-hero-content">
+          {(game.cover_url_hd || game.cover_url) && (
+            <div class="gd-hero-poster">
+              <img src={game.cover_url_hd ?? game.cover_url!} alt={`${game.name} cover`} />
+            </div>
           )}
-          {game.hltb && (game.hltb.main || game.hltb.main_extra || game.hltb.completionist) && (
-            <p class="muted small">
-              HLTB:
-              {game.hltb.main && ` Main ${game.hltb.main}h`}
-              {game.hltb.main_extra && ` · Extra ${game.hltb.main_extra}h`}
-              {game.hltb.completionist && ` · 100% ${game.hltb.completionist}h`}
-            </p>
+
+          <div class="gd-hero-info">
+            {game.logo_url ? (
+              <img class="gd-hero-logo" src={game.logo_url} alt={game.name} />
+            ) : (
+              <h1 class="gd-hero-title">{game.name}</h1>
+            )}
+
+            <div class="gd-hero-details">
+              {releaseDateShort && (
+                <div class="gd-hero-detail">
+                  <span class="gd-hero-detail-val">{releaseDateShort}</span>
+                  <span class="gd-hero-detail-label">Release Date</span>
+                </div>
+              )}
+              {primaryDeveloper && (
+                <div class="gd-hero-detail">
+                  <span class="gd-hero-detail-val">{primaryDeveloper}</span>
+                  <span class="gd-hero-detail-label">Developed By</span>
+                </div>
+              )}
+              {heroPlatforms.length > 0 && (
+                <div class="gd-hero-detail gd-hero-detail--platforms">
+                  <div class="gd-hero-platforms">
+                    {heroPlatforms.map((p) => (
+                      <span class="gd-hero-platform" title={p.label}>
+                        {p.icon ? (
+                          <img src={p.icon} alt={p.label} />
+                        ) : (
+                          <span class="gd-hero-platform-fallback">{p.label.slice(0, 2)}</span>
+                        )}
+                      </span>
+                    ))}
+                    {extraPlatformsCount > 0 && (
+                      <span class="gd-hero-platform-more">+{extraPlatformsCount}</span>
+                    )}
+                  </div>
+                  <span class="gd-hero-detail-label">Available on</span>
+                </div>
+              )}
+            </div>
+
+            <hr class="gd-hero-divider" />
+
+            <div class="gd-hero-cards">
+              <div class="gd-hero-card gd-hero-card--ratings">
+                <h3 class="gd-hero-card-title">Ratings</h3>
+                <div class="gd-hero-card-body gd-hero-ratings">
+                  <div class="gd-hero-ratings-main">
+                    <img class="gd-hero-laurel" src="/icons/laurel-left.svg" alt="" aria-hidden="true" />
+                    <div class="gd-hero-ratings-main-text">
+                      <div class="gd-hero-ratings-big">{igdbRating ?? '—'}{igdbRating && '/10'}</div>
+                      <div class="gd-hero-ratings-source">IGDB</div>
+                    </div>
+                    <img class="gd-hero-laurel" src="/icons/laurel-right.svg" alt="" aria-hidden="true" />
+                  </div>
+                  <div class="gd-hero-ratings-sub">
+                    <div>
+                      <span class="gd-hero-ratings-sub-val">{aggRating ? `${aggRating}/10` : '—'}</span>
+                      <span class="gd-hero-ratings-sub-label">Open Critic</span>
+                    </div>
+                    <div>
+                      <span class="gd-hero-ratings-sub-val">{aggRating ? `${aggRating}/10` : '—'}</span>
+                      <span class="gd-hero-ratings-sub-label">Meta Critic</span>
+                    </div>
+                    <div>
+                      <span class="gd-hero-ratings-sub-val">{aggRating ? `${aggRating}/10` : '—'}</span>
+                      <span class="gd-hero-ratings-sub-label">IGN</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="gd-hero-card gd-hero-card--hltb">
+                <h3 class="gd-hero-card-title">How long to Beat</h3>
+                <div class="gd-hero-card-body gd-hero-hltb">
+                  <div class="gd-hero-hltb-main">
+                    <div class="gd-hero-hltb-big">{hltbMain != null ? `${hltbMain} Hours` : '—'}</div>
+                    <div class="gd-hero-hltb-label">Main Game</div>
+                  </div>
+                  <div class="gd-hero-hltb-sub">
+                    <div>
+                      <span class="gd-hero-hltb-sub-val">{hltbCompletionist != null ? `${hltbCompletionist} Hours` : '—'}</span>
+                      <span class="gd-hero-hltb-sub-label">100% Complete</span>
+                    </div>
+                    <div>
+                      <span class="gd-hero-hltb-sub-val">{hltbExtra != null ? `${hltbExtra} Hours` : '—'}</span>
+                      <span class="gd-hero-hltb-sub-label">Extra</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="gd-hero-card gd-hero-card--socials">
+                <h3 class="gd-hero-card-title">Socials</h3>
+                <div class="gd-hero-card-body gd-hero-socials">
+                  {topSocials.length === 0 ? (
+                    <div class="gd-hero-socials-empty">No socials listed</div>
+                  ) : (
+                    <div class="gd-hero-socials-grid">
+                      {topSocials.map((s) => (
+                        <a class="gd-hero-social" href={s.url} target="_blank" rel="noopener" aria-label={s.label} title={s.label}>
+                          <span class={`gd-hero-social-ico gd-hero-social-ico--${s.key}`} aria-hidden="true">
+                            {s.key === 'youtube' && <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M21.6 7.2a2.5 2.5 0 0 0-1.76-1.76C18.2 5 12 5 12 5s-6.2 0-7.84.44A2.5 2.5 0 0 0 2.4 7.2 26 26 0 0 0 2 12a26 26 0 0 0 .4 4.8 2.5 2.5 0 0 0 1.76 1.76C5.8 19 12 19 12 19s6.2 0 7.84-.44a2.5 2.5 0 0 0 1.76-1.76A26 26 0 0 0 22 12a26 26 0 0 0-.4-4.8zM10 15V9l5 3-5 3z"/></svg>}
+                            {s.key === 'instagram' && <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor"/></svg>}
+                            {s.key === 'twitter' && <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M18 3h3l-7.5 8.6L22.5 21H16l-5-6.6L5 21H2l8-9.2L1.5 3H8l4.5 6 5.5-6z"/></svg>}
+                            {s.key === 'twitch' && <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M4 3h17v11l-5 5h-3l-3 3H8v-3H4V3zm2 2v12h3v3l3-3h3l4-4V5H6zm6 3h2v5h-2V8zm5 0h2v5h-2V8z"/></svg>}
+                            {s.key === 'facebook' && <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M13 22v-8h3l1-4h-4V7.5c0-1.2.4-2 2-2h2V2.2C16.5 2.1 15.4 2 14 2c-3 0-5 1.8-5 5v3H6v4h3v8h4z"/></svg>}
+                            {s.key === 'reddit' && <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg>}
+                            {s.key === 'discord' && <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M19 5a16 16 0 0 0-4-1l-.2.4A12 12 0 0 1 18 6c-2-1-4-1.5-6-1.5S8 5 6 6a12 12 0 0 1 3.2-1.6L9 4a16 16 0 0 0-4 1C2.5 9 2 13 2 17a13 13 0 0 0 5 2l1-1.5a10 10 0 0 1-2.5-1.3l.4-.3a14 14 0 0 0 6 1.6c2 0 4-.5 6-1.6l.4.3A10 10 0 0 1 16 17.5L17 19a13 13 0 0 0 5-2c0-4-.5-8-3-12zM9 14c-1 0-1.7-1-1.7-2S8 10 9 10s1.7 1 1.7 2S10 14 9 14zm6 0c-1 0-1.7-1-1.7-2s.7-2 1.7-2 1.7 1 1.7 2-.7 2-1.7 2z"/></svg>}
+                          </span>
+                        </a>
+                      ))}
+                      {moreSocialsCount > 0 && (
+                        <a class="gd-hero-social gd-hero-social--more" href="#useful-links">
+                          <span class="gd-hero-social-more">+{moreSocialsCount} More</span>
+                        </a>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div class="gd-hero-actions">
+              {featuredTrailer ? (
+                <a class="gd-trailer-btn" href={featuredTrailer.youtube_url} target="_blank" rel="noopener">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M8 5v14l11-7z" fill="currentColor"/>
+                  </svg>
+                  <span>Watch Trailer</span>
+                </a>
+              ) : (
+                <span class="gd-trailer-btn gd-trailer-btn--disabled">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M8 5v14l11-7z" fill="currentColor"/>
+                  </svg>
+                  <span>No Trailer</span>
+                </span>
+              )}
+              <form method="POST" action="/api/track" class="gd-bookmark-form">
+                <input type="hidden" name="action" value="set_status" />
+                <input type="hidden" name="igdb_id" value={game.igdb_id} />
+                <input type="hidden" name="status" value="wishlist" />
+                <input type="hidden" name="redirect_to" value={redirectTo} />
+                <button type="submit" class={`gd-bookmark-btn ${userGame?.status === 'wishlist' ? 'is-active' : ''}`} aria-label="Add to wishlist">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M6 4h12a1 1 0 0 1 1 1v15.382a.5.5 0 0 1-.724.447L12 17.5l-6.276 3.329A.5.5 0 0 1 5 20.382V5a1 1 0 0 1 1-1z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" fill={userGame?.status === 'wishlist' ? 'currentColor' : 'none'}/>
+                  </svg>
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <main class="gd-main">
+      <div class="gd-grid">
+        <!-- LEFT (main) COLUMN -->
+        <div class="gd-col-main">
+          {/* Screenshots */}
+          {screenshots.length > 0 && (
+            <section class="gd-block">
+              <h2 class="gd-h2">Screenshots</h2>
+              <div class="gd-carousel" data-carousel>
+                <div class="gd-carousel-main">
+                  <img
+                    class="gd-carousel-img"
+                    data-carousel-main
+                    src={screenshots[0].url_hd}
+                    alt="Game screenshot"
+                  />
+                  <button
+                    type="button"
+                    class="gd-carousel-edge gd-carousel-edge--left"
+                    data-carousel-prev
+                    aria-label="Previous screenshot"
+                  >
+                    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="15 6 9 12 15 18" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    class="gd-carousel-edge gd-carousel-edge--right"
+                    data-carousel-next
+                    aria-label="Next screenshot"
+                  >
+                    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="9 6 15 12 9 18" />
+                    </svg>
+                  </button>
+                </div>
+                <div class="gd-carousel-thumbs">
+                  <button
+                    type="button"
+                    class="gd-carousel-navbtn"
+                    data-carousel-prev
+                    aria-label="Previous screenshot"
+                  >
+                    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="15 6 9 12 15 18" />
+                    </svg>
+                  </button>
+                  <div class="gd-carousel-strip" data-carousel-strip>
+                    {screenshots.map((s, i) => (
+                      <button
+                        type="button"
+                        class={`gd-carousel-thumb${i === 0 ? ' is-active' : ''}`}
+                        data-carousel-thumb
+                        data-index={i}
+                        data-full={s.url_hd}
+                        aria-label={`Show screenshot ${i + 1}`}
+                      >
+                        <img src={s.url} alt="" loading="lazy" />
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    class="gd-carousel-navbtn"
+                    data-carousel-next
+                    aria-label="Next screenshot"
+                  >
+                    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="9 6 15 12 9 18" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* About the Game */}
+          {(game.summary || game.storyline) && (
+            <section class="gd-block">
+              <h2 class="gd-h2">About the Game</h2>
+              {game.summary && <p class="gd-prose">{game.summary}</p>}
+              {game.storyline && (
+                <div class="gd-storyline">
+                  <h3 class="gd-storyline-h">Storyline</h3>
+                  <p class="gd-prose">{game.storyline}</p>
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* System Requirements */}
+          <section class="gd-block">
+            <h2 class="gd-h2">System Requirements</h2>
+            <div class="gd-specs">
+              <div class="gd-specs-head">
+                <div class="gd-specs-cell gd-specs-cell--label">
+                  <span class="gd-specs-ico" aria-hidden="true">
+                    <img src="/icons/specs/Components.svg" alt="" width="30" height="30" />
+                  </span>
+                  <span>Components</span>
+                </div>
+                <div class="gd-specs-cell gd-specs-cell--head">Minimum Specs</div>
+                <div class="gd-specs-cell gd-specs-cell--head">Recommended Specs</div>
+              </div>
+              {specRows.map((row) => (
+                <div class="gd-specs-row">
+                  <div class="gd-specs-cell gd-specs-cell--label">
+                    <span class="gd-specs-ico" aria-hidden="true" style={`width:${row.iconSize}px;height:${row.iconSize}px`}>
+                      <img src={row.icon} alt="" width={row.iconSize} height={row.iconSize} />
+                    </span>
+                    <span>{row.label}</span>
+                  </div>
+                  <div class="gd-specs-cell">{row.min}</div>
+                  <div class="gd-specs-cell">{row.rec}</div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {/* Tabbed related games */}
+          <section class="gd-block">
+            <div class="gd-tabs" role="tablist">
+              {tabs.map((t, i) => (
+                <button
+                  type="button"
+                  class={`gd-tab ${i === 0 ? 'is-active' : ''}`}
+                  data-tab-target={t.key}
+                  role="tab"
+                  aria-selected={i === 0 ? 'true' : 'false'}
+                >
+                  {t.label}
+                  {t.count > 0 && <span class="gd-tab-count">{t.count}</span>}
+                </button>
+              ))}
+            </div>
+
+            <div class="gd-tab-panel" data-tab-panel="similar" data-active="true">
+              {similarGames.length === 0 ? (
+                <p class="gd-empty">No similar games yet.</p>
+              ) : (
+                <ul class="gd-related-grid">
+                  {similarGames.map((g) => (
+                    <li>
+                      <a class="gd-related-card" href={`/games/${g.igdb_id}`}>
+                        <div class="gd-related-cover">
+                          {g.cover_url ? <img src={g.cover_url} alt={g.name} loading="lazy" /> : <div class="gd-cover-fallback"></div>}
+                        </div>
+                        <div class="gd-related-meta">
+                          <div class="gd-related-rating">{ratingForCard(userScore != null ? userScore * 10 : null) ?? '—'}/10 Rating</div>
+                          <div class="gd-related-name">{g.name}</div>
+                        </div>
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div class="gd-tab-panel" data-tab-panel="addon">
+              {addonGames.length === 0 ? (
+                <p class="gd-empty">No expansions or add-ons.</p>
+              ) : (
+                <ul class="gd-related-grid">
+                  {addonGames.map((g) => (
+                    <li>
+                      <a class="gd-related-card" href={`/games/${g.igdb_id}`}>
+                        <div class="gd-related-cover"><div class="gd-cover-fallback"></div></div>
+                        <div class="gd-related-meta">
+                          <div class="gd-related-name">{g.name}</div>
+                        </div>
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div class="gd-tab-panel" data-tab-panel="extra">
+              {extraGames.length === 0 ? (
+                <p class="gd-empty">No DLC or extras listed.</p>
+              ) : (
+                <ul class="gd-related-grid">
+                  {extraGames.map((g) => (
+                    <li>
+                      <a class="gd-related-card" href={`/games/${g.igdb_id}`}>
+                        <div class="gd-related-cover">
+                          {g.cover_url ? <img src={g.cover_url} alt={g.name} loading="lazy" /> : <div class="gd-cover-fallback"></div>}
+                        </div>
+                        <div class="gd-related-meta">
+                          <div class="gd-related-name">{g.name}</div>
+                        </div>
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </section>
+
+          {/* In this series */}
+          {seriesOthers.length > 0 && (
+            <section class="gd-block">
+              <h2 class="gd-h2">In this series</h2>
+              <ul class="gd-related-grid">
+                {seriesOthers.slice(0, 8).map((g) => (
+                  <li>
+                    <a class="gd-related-card" href={`/games/${g.igdb_id}`}>
+                      <div class="gd-related-cover">
+                        {g.cover_url ? <img src={g.cover_url} alt={g.name} loading="lazy" /> : <div class="gd-cover-fallback"></div>}
+                      </div>
+                      <div class="gd-related-meta">
+                        <div class="gd-related-name">{g.name}</div>
+                        {g.year && <div class="gd-related-sub">{g.year}</div>}
+                      </div>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </section>
           )}
         </div>
-      </header>
 
-      {user ? (
-        <section class="card">
-          <h2>Your tracking</h2>
-          <form method="POST" action="/api/track" class="status-row">
-            <input type="hidden" name="action" value="set_status" />
-            <input type="hidden" name="igdb_id" value={game.igdb_id} />
-            <input type="hidden" name="redirect_to" value={redirectTo} />
-            {STATUSES.map((s) => (
-              <button
-                type="submit"
-                name="status"
-                value={s.value}
-                class={`pill ${userGame?.status === s.value ? 'active' : ''}`}
-              >
-                {s.label}
-              </button>
-            ))}
-          </form>
+        <!-- RIGHT (side) COLUMN -->
+        <aside class="gd-col-side">
+          {/* Title (outside) + Logo banner */}
+          <div class="gd-side-title-wrap">
+            <div class="gd-side-title">{game.name}</div>
+            <div class="gd-side-banner">
+              {game.logo_url ? (
+                <img src={game.logo_url} alt={`${game.name} logo`} class="gd-side-logo" />
+              ) : (
+                <div class="gd-side-logo-fallback">{game.name}</div>
+              )}
+            </div>
+          </div>
 
-          {userGame && (
-            <>
-              <form method="POST" action="/api/track" class="meta-form">
-                <input type="hidden" name="action" value="update_meta" />
-                <input type="hidden" name="igdb_id" value={game.igdb_id} />
-                <input type="hidden" name="redirect_to" value={redirectTo} />
-                <label>
-                  Your rating (1–10)
-                  <input
-                    type="number"
-                    name="rating"
-                    min="1"
-                    max="10"
-                    value={userGame.rating ?? ''}
-                  />
-                </label>
-                <label>
-                  Notes
-                  <textarea name="notes" rows="3">{userGame.notes ?? ''}</textarea>
-                </label>
-                <button type="submit" class="btn-primary">Save</button>
-              </form>
-
-              <form method="POST" action="/api/track">
-                <input type="hidden" name="action" value="delete" />
-                <input type="hidden" name="igdb_id" value={game.igdb_id} />
-                <input type="hidden" name="redirect_to" value={redirectTo} />
-                <button type="submit" class="btn-danger">Remove from shelf</button>
-              </form>
-            </>
+          {/* Where to Buy */}
+          {storeLinks.length > 0 && (
+            <div class="gd-side-block">
+              <h3 class="gd-side-h">Where to Buy</h3>
+              <div class="gd-store-grid">
+                {storeLinks.slice(0, 6).map((s) => (
+                  <a class="gd-store-btn" href={s.url} target="_blank" rel="noopener">
+                    <span>{s.label}</span>
+                    <span class={`gd-store-ico gd-store-ico--${s.key}`} aria-hidden="true">
+                      {s.key === 'steam' && (
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 2C6.6 2 2.2 6.2 2 11.5l5.4 2.2c.5-.3 1-.5 1.6-.5h.2l2.4-3.5v-.1c0-2.1 1.7-3.8 3.8-3.8s3.8 1.7 3.8 3.8-1.7 3.8-3.8 3.8h-.1l-3.5 2.5v.1c0 1.6-1.3 3-3 3-1.4 0-2.7-1-3-2.4l-3.9-1.6C3.5 19.4 7.4 22 12 22c5.5 0 10-4.5 10-10S17.5 2 12 2z"/></svg>
+                      )}
+                      {s.key === 'epic' && (
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M5 3h14a2 2 0 0 1 2 2v13l-9 4-9-4V5a2 2 0 0 1 2-2zm3 4v10h6v-2h-4v-2h3v-2h-3V9h4V7H8z"/></svg>
+                      )}
+                      {s.key === 'xbox' && (
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm0 4c1.5 1 4 3 6 6-1 2-3 6-6 8-3-2-5-6-6-8 2-3 4.5-5 6-6z"/></svg>
+                      )}
+                      {s.key === 'playstation' && (
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M9.5 3v15.6l3.2 1V8.3c0-.7.3-1.2.9-1.2.7 0 1 .7 1 1.4v4.8c2-.9 4.4-1.7 4.4-4.8C19 4 14.9 2.9 9.5 3z"/></svg>
+                      )}
+                      {s.key === 'gog' && (
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" fill="none"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
+                      )}
+                      {s.key === 'nintendo' && (
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><rect x="3" y="5" width="8" height="14" rx="2"/><rect x="13" y="5" width="8" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+                      )}
+                    </span>
+                  </a>
+                ))}
+              </div>
+            </div>
           )}
-        </section>
-      ) : (
-        <p class="muted"><a href="/login">Log in</a> to track this game.</p>
-      )}
 
-      {game.summary && (
-        <section class="card">
-          <h2>Summary</h2>
-          <p>{game.summary}</p>
-        </section>
-      )}
-
-      {(game.developers.length > 0 || game.publishers.length > 0) && (
-        <section class="card">
-          <h2>Credits</h2>
-          {game.developers.length > 0 && (
-            <p><strong>Developer:</strong> {game.developers.map((d) => d.name).join(', ')}</p>
+          {/* Game Tags */}
+          {game.genres.length > 0 && (
+            <div class="gd-side-block">
+              <h3 class="gd-side-h">Game Tags</h3>
+              <div class="gd-tag-cloud">
+                {game.genres.map((t) => <span class="gd-tag">{t}</span>)}
+                {game.themes?.slice(0, 4).map((t) => <span class="gd-tag">{t.name}</span>)}
+              </div>
+            </div>
           )}
-          {game.publishers.length > 0 && (
-            <p><strong>Publisher:</strong> {game.publishers.map((p) => p.name).join(', ')}</p>
-          )}
-        </section>
-      )}
 
-      {(game.dlcs.length > 0 || game.expansions.length > 0 || game.remakes.length > 0 || game.remasters.length > 0) && (
-        <section class="card">
-          <h2>Related</h2>
-          {[
-            { title: 'DLC', items: game.dlcs },
-            { title: 'Expansions', items: game.expansions },
-            { title: 'Remakes', items: game.remakes },
-            { title: 'Remasters', items: game.remasters },
-          ].filter((g) => g.items.length > 0).map((group) => (
-            <div class="relation-group">
-              <h3>{group.title}</h3>
-              <ul class="relation-list">
-                {group.items.map((r) => (
-                  <li><a href={`/games/${r.igdb_id}`}>{r.name}</a></li>
+          {/* Game Information */}
+          <div class="gd-side-block">
+            <h3 class="gd-side-h">Game Information</h3>
+            <dl class="gd-info">
+              {developers.length > 0 && (
+                <div class="gd-info-row"><dt>Developer</dt><dd>{developers.join(', ')}</dd></div>
+              )}
+              {publishers.length > 0 && (
+                <div class="gd-info-row"><dt>Publisher</dt><dd>{publishers.join(', ')}</dd></div>
+              )}
+              {game.game_modes?.length > 0 && (
+                <div class="gd-info-row"><dt>Game Modes</dt><dd>{game.game_modes.map((m) => m.name).join(', ')}</dd></div>
+              )}
+              {game.player_perspectives?.length > 0 && (
+                <div class="gd-info-row"><dt>Player Perspective</dt><dd>{game.player_perspectives.map((p) => p.name).join(', ')}</dd></div>
+              )}
+              {game.collections?.length > 0 && (
+                <div class="gd-info-row"><dt>Series</dt><dd>{game.collections.map((c) => c.name).join(', ')}</dd></div>
+              )}
+              {game.franchises?.length > 0 && (
+                <div class="gd-info-row"><dt>Franchises</dt><dd>{game.franchises.map((f) => f.name).join(', ')}</dd></div>
+              )}
+              {game.game_engines?.length > 0 && (
+                <div class="gd-info-row"><dt>Game Engine</dt><dd>{game.game_engines.map((e) => e.name).join(', ')}</dd></div>
+              )}
+              {releaseDate && (
+                <div class="gd-info-row"><dt>Released</dt><dd>{releaseDate}</dd></div>
+              )}
+            </dl>
+          </div>
+
+          {/* Age Rating */}
+          {primaryAgeRating && (
+            <div class="gd-side-block">
+              <h3 class="gd-side-h">Age Rating</h3>
+              {(() => {
+                const descriptors = primaryAgeRating.content_descriptions ?? [];
+                const topDescriptor = descriptors[0] ?? esrbInfo?.label ?? null;
+                const bottomDescriptors = descriptors.slice(1, 4);
+                const bottomText = bottomDescriptors.length > 0
+                  ? bottomDescriptors.join(' • ')
+                  : (descriptors.length === 0 && primaryAgeRating.synopsis ? primaryAgeRating.synopsis : null);
+                return (
+                  <div class="gd-age">
+                    <div class="gd-age-row">
+                      {ageImage ? (
+                        <img
+                          src={ageImage}
+                          alt={`ESRB ${esrbInfo?.label ?? esrbInfo?.code ?? ''}`}
+                          class="gd-age-img"
+                          onerror="this.onerror=null;this.replaceWith(Object.assign(document.createElement('div'),{className:'gd-age-badge',innerHTML:`<span class='gd-age-num'>${this.dataset.code}</span><span class='gd-age-board'>ESRB</span>`}));"
+                          data-code={esrbInfo?.code ?? '—'}
+                        />
+                      ) : (
+                        <div class="gd-age-badge">
+                          <span class="gd-age-num">{esrbInfo?.code ?? '—'}</span>
+                          <span class="gd-age-board">ESRB</span>
+                        </div>
+                      )}
+                      <div class="gd-age-body">
+                        <div class="gd-age-head">
+                          <p class="gd-age-line gd-age-code" data-tip={esrbInfo?.label ?? esrbInfo?.code ?? ''}>
+                            <span>{esrbInfo?.code ?? '—'}</span>
+                          </p>
+                          {topDescriptor && (
+                            <p class="gd-age-line gd-age-desc" data-tip={topDescriptor}>
+                              <span>{topDescriptor}</span>
+                            </p>
+                          )}
+                        </div>
+                        {bottomText && (
+                          <>
+                            <span class="gd-age-divider" aria-hidden="true"></span>
+                            <p class="gd-age-line gd-age-desc" data-tip={bottomText}>
+                              <span>{bottomText}</span>
+                            </p>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
+          {/* Languages */}
+          {languageNames.length > 0 && (
+            <div class="gd-side-block">
+              <h3 class="gd-side-h">Languages</h3>
+              <p class="gd-lang">{languageNames.join(', ')}</p>
+            </div>
+          )}
+
+          {/* Useful links */}
+          {otherLinks.length > 0 && (
+            <div class="gd-side-block">
+              <h3 class="gd-side-h">Useful Links</h3>
+              <ul class="gd-link-list">
+                {otherLinks.slice(0, 6).map((l) => (
+                  <li><a href={l.url} target="_blank" rel="noopener">{l.label}</a></li>
                 ))}
               </ul>
             </div>
-          ))}
-        </section>
-      )}
+          )}
 
-      {seriesOthers.length > 0 && (
-        <section class="card">
-          <h2>Series</h2>
-          <ul class="series-list">
-            {seriesOthers.map((g) => (
-              <li>
-                <a href={`/games/${g.igdb_id}`}>
-                  {g.cover_url ? <img src={g.cover_url} alt="" loading="lazy" /> : <div class="series-placeholder" />}
-                  <div>
-                    <div class="series-name">{g.name}</div>
-                    {g.year && <div class="muted small">{g.year}</div>}
-                  </div>
-                </a>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+          {!user && (
+            <div class="gd-side-block gd-side-cta">
+              <p><a href="/login">Log in</a> to track this game.</p>
+            </div>
+          )}
+        </aside>
+      </div>
     </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        <div class="foot-brand">
+          <div class="brand"><span class="logo" aria-hidden="true">▤</span> Yourshelf</div>
+          <p>The first hub end-to-end analytics service for the site, designed to work with enterprises of various levels and business segments.</p>
+          <p class="muted">© 2025 — Yourshelf</p>
+        </div>
+        <div class="foot-col">
+          <h5>Game discovery</h5>
+          <a href="/">Discover</a>
+          <a href="/browse">Browse</a>
+          <a href="/search">Search</a>
+          <a href="/my-games">My Games</a>
+        </div>
+        <div class="foot-col">
+          <h5>Info</h5>
+          <a href="#">About us</a>
+          <a href="#">Terms & Conditions</a>
+          <a href="#">Privacy Policy</a>
+        </div>
+      </div>
+    </footer>
   </div>
 </Layout>
 
-<script is:inline define:vars={{}}>
-  /* no JS needed; forms handle posts */
-</script>
+<style is:global>
+  :root {
+    --bg: #0a0c10;
+    --bg-2: #0e1014;
+    --surface: #14171d;
+    --surface-2: #181c24;
+    --border: #1f242b;
+    --text: #e6e8eb;
+    --muted: #8a93a0;
+    --accent: #6366f1;
+    --accent-2: #a78bfa;
+  }
+  html, body { background: var(--bg); color: var(--text); margin: 0; }
+  body {
+    font-family: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+</style>
 
 <style>
-  :global(body) { background: #0b0d10; color: #e6e8eb; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; }
-  .page { min-height: 100vh; }
-  .container { max-width: 60rem; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
+  .page { min-height: 100vh; display: flex; flex-direction: column; background: var(--bg); }
 
-  .hero { display: flex; gap: 2rem; margin-bottom: 2rem; }
-  .cover { width: 200px; aspect-ratio: 3 / 4; border-radius: 10px; object-fit: cover; flex-shrink: 0; }
-  .placeholder { background: #1a1f26; }
-  .hero-text h1 { margin: 0 0 0.5rem; letter-spacing: -0.02em; }
-  .muted { color: #9aa3ad; }
-  .small { font-size: 0.85rem; }
-  .tags { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.75rem 0; }
-  .tag { background: #1a1f26; color: #c5cbd2; padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.8rem; }
-  .rating strong { font-size: 1.5rem; color: #6fdb9b; }
-
-  .card {
-    background: #11151a; border: 1px solid #1f242b; border-radius: 12px;
-    padding: 1.5rem; margin-bottom: 1.25rem;
+  /* ---------- HERO (Figma 162:16133) ---------- */
+  .gd-hero {
+    position: relative;
+    margin: 0 360px;
+    height: 580px;
+    overflow: hidden;
+    background: #0a0c10;
+    font-family: 'Urbanist', 'Manrope', -apple-system, sans-serif;
   }
-  .card h2 { margin: 0 0 1rem; font-size: 1rem; font-weight: 600; color: #c5cbd2; text-transform: uppercase; letter-spacing: 0.06em; }
-
-  .status-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; }
-  .pill {
-    background: #0b0d10; border: 1px solid #2a3038; color: #c5cbd2;
-    padding: 0.4rem 0.85rem; border-radius: 999px; cursor: pointer; font-size: 0.9rem;
+  .gd-hero-bg {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    z-index: 0;
+    pointer-events: none;
   }
-  .pill:hover { border-color: #6366f1; }
-  .pill.active { background: #6366f1; border-color: #6366f1; color: white; }
-
-  .meta-form { display: flex; flex-direction: column; gap: 0.75rem; margin: 1rem 0; }
-  .meta-form label { display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.9rem; color: #c5cbd2; }
-  .meta-form input, .meta-form textarea {
-    background: #0b0d10; border: 1px solid #2a3038; border-radius: 8px;
-    padding: 0.5rem 0.7rem; color: #e6e8eb; font-size: 0.95rem; font-family: inherit;
+  .gd-hero-shade-bottom {
+    position: absolute; inset: 0;
+    background:
+      linear-gradient(180deg, rgba(10,12,16,0.45) 0%, rgba(10,12,16,0.55) 40%, #0a0c10 86.7%);
+    z-index: 1;
+    pointer-events: none;
   }
-  .meta-form input:focus, .meta-form textarea:focus { outline: none; border-color: #6366f1; }
-
-  .btn-primary {
-    align-self: flex-start; background: #6366f1; color: white; border: none;
-    border-radius: 8px; padding: 0.55rem 1.15rem; cursor: pointer; font-size: 0.9rem;
+  .gd-hero-shade-left {
+    position: absolute; left: 0; top: 0;
+    width: 135px; height: 580px;
+    background: linear-gradient(270deg, rgba(17,16,20,0) 0%, #0a0c10 100%);
+    z-index: 1;
+    pointer-events: none;
   }
-  .btn-primary:hover { background: #5457e0; }
-  .btn-danger {
-    background: transparent; color: #ff8a93; border: 1px solid #4a1f24;
-    border-radius: 8px; padding: 0.45rem 1rem; cursor: pointer; font-size: 0.85rem;
+  .gd-hero-shade-right {
+    position: absolute; right: 0; top: 0;
+    width: 135px; height: 580px;
+    background: linear-gradient(90deg, rgba(17,16,20,0) 0%, #0a0c10 100%);
+    z-index: 1;
+    pointer-events: none;
   }
-  .btn-danger:hover { background: #2a1416; }
+  .gd-hero-wrap {
+    position: relative; z-index: 2;
+    height: 100%;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    padding: 48px;
+    max-width: 1272px;
+    margin: 0 auto;
+  }
+  .gd-hero-content {
+    display: flex;
+    gap: 24px;
+    align-items: flex-end;
+    flex: 1 0 0;
+    min-width: 0;
+  }
+  .gd-hero-poster {
+    height: 329px;
+    aspect-ratio: 3 / 4;
+    border-radius: 7.5px;
+    overflow: hidden;
+    flex-shrink: 0;
+    background: #11151a;
+  }
+  .gd-hero-poster img {
+    width: 100%; height: 100%;
+    object-fit: cover;
+    object-position: center;
+    display: block;
+  }
+  .gd-hero-info {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    width: 740px;
+    flex-shrink: 0;
+  }
+  .gd-hero-title {
+    margin: 0;
+    color: white;
+    font-family: 'Urbanist', sans-serif;
+    font-weight: 800;
+    font-size: 44px;
+    letter-spacing: -0.01em;
+    line-height: 1.05;
+    text-shadow: 0 4px 24px rgba(0,0,0,0.6);
+  }
+  .gd-hero-logo {
+    display: block;
+    width: 171px;
+    height: 60px;
+    object-fit: contain;
+    object-position: left center;
+    filter: drop-shadow(0 6px 22px rgba(0,0,0,0.6));
+  }
 
-  .relation-group { margin-bottom: 1rem; }
-  .relation-group h3 { margin: 0 0 0.4rem; font-size: 0.85rem; color: #9aa3ad; font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; }
-  .relation-list { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
-  .relation-list a { color: #c5cbd2; text-decoration: none; background: #1a1f26; padding: 0.3rem 0.7rem; border-radius: 6px; font-size: 0.85rem; }
-  .relation-list a:hover { color: #e6e8eb; background: #232a32; }
+  /* Details row */
+  .gd-hero-details {
+    display: flex;
+    gap: 38px;
+    align-items: center;
+  }
+  .gd-hero-detail {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    align-items: flex-start;
+    text-align: left;
+  }
+  .gd-hero-detail-val {
+    color: white;
+    font-weight: 800;
+    font-size: 18px;
+    line-height: 1.2;
+    white-space: nowrap;
+  }
+  .gd-hero-detail-label {
+    color: rgba(255,255,255,0.65);
+    font-weight: 400;
+    font-size: 14px;
+    line-height: 1.2;
+  }
+  .gd-hero-detail--platforms .gd-hero-platforms {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    height: 20px;
+  }
+  .gd-hero-platform {
+    width: 20px; height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    overflow: hidden;
+  }
+  .gd-hero-platform img {
+    width: 14.5px;
+    height: 14.5px;
+    object-fit: contain;
+    display: block;
+  }
+  .gd-hero-platform-fallback {
+    font-size: 9px;
+    font-weight: 700;
+    color: white;
+  }
+  .gd-hero-platform-more {
+    background: white;
+    color: black;
+    border-radius: 3.5px;
+    padding: 0 4px;
+    font-family: 'Urbanist', sans-serif;
+    font-size: 7.7px;
+    font-weight: 800;
+    line-height: 14px;
+    height: 14px;
+    min-width: 14px;
+    text-align: center;
+  }
 
-  .series-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
-  .series-list a { display: flex; gap: 0.75rem; align-items: center; text-decoration: none; color: inherit; padding: 0.5rem; border-radius: 8px; }
-  .series-list a:hover { background: #1a1f26; }
-  .series-list img, .series-placeholder { width: 48px; aspect-ratio: 3/4; object-fit: cover; border-radius: 4px; background: #1a1f26; }
-  .series-name { font-size: 0.9rem; }
+  .gd-hero-divider {
+    border: none;
+    border-top: 1px solid rgba(255,255,255,0.12);
+    margin: 0;
+    width: 100%;
+  }
 
-  @media (max-width: 640px) {
-    .hero { flex-direction: column; }
-    .cover { width: 140px; }
+  /* Cards row: Ratings | HLTB | Socials */
+  .gd-hero-cards {
+    display: flex;
+    gap: 13px;
+    align-items: flex-start;
+    width: 100%;
+  }
+  .gd-hero-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .gd-hero-card--ratings,
+  .gd-hero-card--hltb,
+  .gd-hero-card--socials {
+    flex: 1.25 1 0;
+  }
+  .gd-hero-card-title {
+    margin: 0;
+    color: rgba(255,255,255,0.55);
+    font-weight: 700;
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .gd-hero-card-body {
+    background: rgba(255,255,255,0.03);
+    border: 0.8px solid rgba(255,255,255,0.14);
+    border-radius: 6.5px;
+    height: 102px;
+    overflow: hidden;
+    position: relative;
+    backdrop-filter: blur(2px);
+  }
+
+  /* Ratings card */
+  .gd-hero-ratings {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+  .gd-hero-ratings-main {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    flex: 1 1 auto;
+    width: 100%;
+  }
+  .gd-hero-laurel {
+    width: 18px;
+    height: 35px;
+    display: block;
+  }
+  .gd-hero-ratings-main-text {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    line-height: normal;
+  }
+  .gd-hero-ratings-big {
+    color: white;
+    font-family: 'Urbanist', sans-serif;
+    font-weight: 800;
+    font-size: 16px;
+    line-height: normal;
+    white-space: nowrap;
+  }
+  .gd-hero-ratings-source {
+    color: rgba(255,255,255,0.51);
+    font-family: 'Urbanist', sans-serif;
+    font-weight: 700;
+    font-size: 12px;
+    letter-spacing: 0.48px;
+    margin-top: 4px;
+    white-space: nowrap;
+  }
+  .gd-hero-ratings-sub {
+    display: flex;
+    border-top: 0.81px solid rgba(255,255,255,0.06);
+    height: 48px;
+    width: 100%;
+  }
+  .gd-hero-ratings-sub > div {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    line-height: normal;
+  }
+  .gd-hero-ratings-sub-val {
+    color: white;
+    font-family: 'Urbanist', sans-serif;
+    font-weight: 800;
+    font-size: 14px;
+    width: 100%;
+  }
+  .gd-hero-ratings-sub-label {
+    color: rgba(255,255,255,0.51);
+    font-family: 'Urbanist', sans-serif;
+    font-weight: 600;
+    font-size: 10px;
+    width: 100%;
+    margin-top: 2px;
+  }
+
+  /* HLTB card */
+  .gd-hero-hltb {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .gd-hero-hltb-main {
+    flex: 1 1 0;
+    min-height: 0;
+    padding: 0 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    width: 100%;
+  }
+  .gd-hero-hltb-big {
+    color: white;
+    font-family: 'Urbanist', sans-serif;
+    font-weight: 800;
+    font-size: 16px;
+    line-height: normal;
+    width: 100%;
+  }
+  .gd-hero-hltb-label {
+    color: rgba(255,255,255,0.45);
+    font-family: 'Urbanist', sans-serif;
+    font-weight: 700;
+    font-size: 12px;
+    line-height: normal;
+    width: 100%;
+    margin-top: 2px;
+  }
+  .gd-hero-hltb-sub {
+    display: flex;
+    flex: 1 1 0;
+    min-height: 0;
+    border-top: 0.81px solid rgba(255,255,255,0.06);
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+  }
+  .gd-hero-hltb-sub > div {
+    flex: 1 1 0;
+    height: 100%;
+    padding: 0 16px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    line-height: normal;
+  }
+  .gd-hero-hltb-sub > div { align-items: flex-start; text-align: left; }
+  .gd-hero-hltb-sub-val {
+    color: white;
+    font-family: 'Urbanist', sans-serif;
+    font-weight: 800;
+    font-size: 14px;
+    line-height: normal;
+  }
+  .gd-hero-hltb-sub-label {
+    color: rgba(255,255,255,0.45);
+    font-family: 'Urbanist', sans-serif;
+    font-weight: 600;
+    font-size: 10px;
+    line-height: normal;
+    margin-top: 2px;
+    white-space: nowrap;
+  }
+
+  /* Socials card */
+  .gd-hero-socials {
+    padding: 0;
+  }
+  .gd-hero-socials-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    grid-template-rows: repeat(2, 1fr);
+    height: 100%;
+    width: 100%;
+  }
+  .gd-hero-social {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-decoration: none;
+    color: white;
+    transition: background 0.15s;
+  }
+  .gd-hero-social:hover { background: rgba(255,255,255,0.05); }
+  .gd-hero-social-ico {
+    display: inline-flex;
+    color: white;
+  }
+  .gd-hero-social-ico svg {
+    width: 20px;
+    height: 20px;
+  }
+  .gd-hero-social-more {
+    color: white;
+    font-family: 'Urbanist', sans-serif;
+    font-weight: 700;
+    font-size: 12px;
+  }
+  .gd-hero-socials-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: rgba(255,255,255,0.45);
+    font-size: 12px;
+  }
+
+  /* Action buttons */
+  .gd-hero-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .gd-trailer-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    background: #851dd5;
+    color: white;
+    text-decoration: none;
+    border: 0.9px solid rgba(255,255,255,0.18);
+    padding: 9px 14px;
+    border-radius: 7px;
+    font-family: 'Urbanist', sans-serif;
+    font-weight: 600;
+    font-size: 14px;
+    line-height: 1.4;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .gd-trailer-btn:hover { background: #9528ee; }
+  .gd-trailer-btn--disabled { background: #2a2f38; opacity: 0.7; cursor: default; }
+  .gd-bookmark-form { margin: 0; }
+  .gd-bookmark-btn {
+    width: 37.3px; height: 37.3px;
+    background: #851dd5;
+    color: white;
+    border: 0.9px solid rgba(255,255,255,0.18);
+    border-radius: 7px;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    transition: background 0.15s;
+  }
+  .gd-bookmark-btn:hover { background: #9528ee; }
+  .gd-bookmark-btn.is-active { background: #9528ee; }
+
+  /* ---------- MAIN ---------- */
+  .gd-main {
+    max-width: 1240px; margin: 0 auto; width: 100%;
+    padding: 56px 2.5rem 4rem;
+  }
+
+  .gd-track-strip {
+    display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between;
+    align-items: center;
+    margin-bottom: 32px;
+    padding: 16px 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+  }
+  .gd-track-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; }
+  .gd-pill {
+    background: transparent; border: 1px solid #2a3038; color: #c5cbd2;
+    padding: 0.45rem 0.95rem; border-radius: 999px; cursor: pointer;
+    font: inherit; font-size: 0.85rem;
+    transition: border-color 0.15s, background 0.15s, color 0.15s;
+  }
+  .gd-pill:hover { border-color: #851dd5; color: white; }
+  .gd-pill.is-active { background: #851dd5; border-color: #851dd5; color: white; }
+  .gd-track-meta { display: flex; gap: 12px; align-items: center; margin: 0; }
+  .gd-rating-input { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 0.85rem; }
+  .gd-rating-input input {
+    width: 56px; background: var(--bg); color: white;
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 6px 10px; font: inherit;
+  }
+  .gd-save-btn {
+    background: #851dd5; color: white; border: none;
+    padding: 8px 16px; border-radius: 8px; font-weight: 600; font-size: 0.85rem;
+    cursor: pointer;
+  }
+  .gd-save-btn:hover { background: #9528ee; }
+
+  .gd-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 286px;
+    gap: 32px;
+  }
+  .gd-col-main { min-width: 0; display: flex; flex-direction: column; gap: 56px; }
+  .gd-col-side { display: flex; flex-direction: column; gap: 32px; padding-top: 44px; }
+
+  .gd-block { display: flex; flex-direction: column; gap: 16px; }
+  .gd-h2 {
+    margin: 0; color: white;
+    font-size: 20px; font-weight: 700;
+    letter-spacing: -0.6px; line-height: 1.4;
+  }
+  .gd-empty { color: var(--muted); margin: 0; font-size: 0.9rem; }
+
+  /* Screenshots — Figma 192:51 */
+  .gd-carousel { display: flex; flex-direction: column; gap: 16px; }
+  .gd-carousel-main {
+    position: relative; width: 100%;
+    aspect-ratio: 16 / 9;
+    border-radius: 14px; overflow: hidden;
+    background: #11151a;
+  }
+  .gd-carousel-img {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%; object-fit: cover;
+    display: block;
+  }
+  .gd-carousel-edge {
+    position: absolute; top: 0; bottom: 0;
+    width: 72px;
+    border: none; padding: 0;
+    display: flex; align-items: center;
+    color: #fff; cursor: pointer;
+    opacity: 0; transition: opacity 180ms ease;
+  }
+  .gd-carousel-main:hover .gd-carousel-edge,
+  .gd-carousel-edge:focus-visible { opacity: 1; }
+  .gd-carousel-edge--left {
+    left: 0; justify-content: flex-start; padding-left: 20px;
+    background: linear-gradient(90deg, rgba(17,16,20,1) 14%, rgba(17,16,20,0.5) 72%, rgba(17,16,20,0) 98%);
+  }
+  .gd-carousel-edge--right {
+    right: 0; justify-content: flex-end; padding-right: 20px;
+    background: linear-gradient(270deg, rgba(17,16,20,1) 2%, rgba(17,16,20,0.5) 60%, rgba(17,16,20,0) 85%);
+  }
+  .gd-carousel-edge svg { display: block; }
+
+  .gd-carousel-thumbs {
+    display: flex; gap: 11px; align-items: center;
+    width: 100%;
+  }
+  .gd-carousel-navbtn {
+    flex: 0 0 auto;
+    width: 36px; height: 108px;
+    background: #090a0c; border: none;
+    border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; cursor: pointer;
+    transition: background 150ms ease;
+  }
+  .gd-carousel-navbtn:hover { background: #15171b; }
+  .gd-carousel-navbtn svg { display: block; }
+
+  .gd-carousel-strip {
+    flex: 1 1 0; min-width: 0;
+    display: flex; gap: 8.416px;
+    overflow: visible;
+  }
+  .gd-carousel-thumb {
+    flex: 0 0 calc((100% - 3 * 8.416px) / 4);
+    height: 108px;
+    padding: 0; border: 1px solid transparent;
+    background: transparent;
+    border-radius: 8.416px; overflow: hidden;
+    cursor: pointer;
+    position: relative;
+    box-sizing: border-box;
+    transition: border-color 150ms ease, transform 150ms ease;
+  }
+  .gd-carousel-thumb.is-hidden { display: none; }
+  .gd-carousel-thumb img {
+    width: 100%; height: 100%; object-fit: cover;
+    display: block; border-radius: 7.4px;
+  }
+  .gd-carousel-thumb.is-active {
+    border-color: rgba(255, 255, 255, 0.4);
+  }
+  .gd-carousel-thumb:hover:not(.is-active) {
+    border-color: rgba(255, 255, 255, 0.18);
+  }
+
+  /* About */
+  .gd-prose {
+    color: rgba(230,232,235,0.78);
+    font-size: 0.95rem;
+    line-height: 1.65;
+    white-space: pre-line;
+    margin: 0;
+  }
+  .gd-storyline { margin-top: 28px; }
+  .gd-storyline-h {
+    margin: 0 0 10px;
+    color: white;
+    font-size: 1.05rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+
+  /* Specs */
+  /* Specs table — Figma 193:1028 */
+  .gd-specs {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    overflow: hidden;
+    font-family: 'Urbanist', system-ui, sans-serif;
+  }
+  .gd-specs-head, .gd-specs-row {
+    display: grid; grid-template-columns: 174px 1fr 1fr;
+    align-items: stretch;
+  }
+  .gd-specs-head { min-height: 62px; }
+  .gd-specs-row { min-height: 62px; }
+  .gd-specs-row:nth-of-type(2) { min-height: 56px; }
+
+  .gd-specs-cell {
+    padding: 16px 20px;
+    font-size: 14px;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: -0.42px;
+    line-height: 1.6;
+    display: flex; align-items: center;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  }
+  .gd-specs-row:last-child .gd-specs-cell { border-bottom: 1px solid rgba(255, 255, 255, 0.12); }
+
+  /* Left "Components" column — continuous fill + right divider, no row borders */
+  .gd-specs-cell--label {
+    background: rgba(255, 255, 255, 0.02);
+    border-bottom: none;
+    border-right: 1px solid rgba(255, 255, 255, 0.12);
+    padding: 16px;
+    gap: 10px;
+    color: rgba(255, 255, 255, 0.6);
+    font-weight: 500;
+  }
+
+  .gd-specs-ico {
+    flex: 0 0 auto;
+    display: inline-flex; align-items: center; justify-content: center;
+    color: rgba(255, 255, 255, 0.7);
+  }
+  .gd-specs-ico img { width: 100%; height: 100%; display: block; }
+  /* Header row uses 30px component icon */
+  .gd-specs-head .gd-specs-ico { width: 30px; height: 30px; }
+  .gd-specs-cell--head {
+    color: rgba(255, 255, 255, 0.55);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  /* Tabs — Figma 197:2930 */
+  .gd-tabs {
+    display: flex; align-items: center;
+    width: 100%;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    background: transparent;
+    border-radius: 0;
+    padding: 0;
+    gap: 0;
+  }
+  .gd-tab {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    padding: 10px 16px;
+    color: rgba(255, 255, 255, 0.6);
+    font-family: 'Urbanist', system-ui, sans-serif;
+    font-size: 16px;
+    font-weight: 500;
+    letter-spacing: -0.48px;
+    line-height: 1.4;
+    cursor: pointer;
+    transition: color 150ms ease, border-color 150ms ease;
+  }
+  .gd-tab:hover { color: rgba(255, 255, 255, 0.85); }
+  .gd-tab.is-active {
+    color: #fff;
+    font-weight: 700;
+    border-bottom-color: #fff;
+    background: transparent;
+  }
+  .gd-tab-count {
+    color: inherit; opacity: 0.7;
+    font-size: 13px; font-weight: 500;
+    background: transparent;
+    border-radius: 0;
+    padding: 0;
+  }
+  .gd-tab-panel { display: none; margin-top: 16px; }
+  .gd-tab-panel[data-active="true"] { display: block; }
+
+  /* Related grid */
+  .gd-related-grid {
+    list-style: none; padding: 0; margin: 0;
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px;
+  }
+  .gd-related-card {
+    display: flex; flex-direction: column; gap: 10px;
+    text-decoration: none; color: inherit;
+    transition: transform 0.15s;
+  }
+  .gd-related-card:hover { transform: translateY(-2px); }
+  .gd-related-cover {
+    aspect-ratio: 179 / 221;
+    border-radius: 10px; overflow: hidden;
+    background: #11151a;
+  }
+  .gd-related-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .gd-cover-fallback { width: 100%; height: 100%; background: linear-gradient(135deg, #1a1f26, #11151a); }
+  .gd-related-meta { display: flex; flex-direction: column; gap: 2px; }
+  .gd-related-rating { color: rgba(255,255,255,0.6); font-size: 0.72rem; font-weight: 500; }
+  .gd-related-name { color: white; font-size: 0.95rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1.3; }
+  .gd-related-sub { color: var(--muted); font-size: 0.78rem; }
+
+  /* ---------- SIDEBAR ---------- */
+  .gd-side-banner {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 18px 16px;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  .gd-side-title-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: 100%;
+  }
+  .gd-side-title {
+    width: 100%;
+    color: white;
+    font-family: 'Urbanist', sans-serif;
+    font-weight: 800;
+    font-size: 18px;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+    text-align: left;
+  }
+  .gd-side-logo {
+    max-width: 100%;
+    max-height: 80px;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    display: block;
+    filter: drop-shadow(0 4px 16px rgba(0,0,0,0.5));
+  }
+  .gd-side-logo-fallback {
+    color: white;
+    font-family: 'Urbanist', sans-serif;
+    font-weight: 800;
+    font-size: 18px;
+    text-align: center;
+    letter-spacing: -0.01em;
+    line-height: 1.2;
+  }
+
+  .gd-side-block { display: flex; flex-direction: column; gap: 12px; }
+  .gd-side-h {
+    margin: 0; color: white;
+    font-size: 0.95rem; font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  /* Store grid */
+  .gd-store-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+  }
+  .gd-store-btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    background: var(--surface); color: white; text-decoration: none;
+    border: 1px solid var(--border);
+    padding: 10px 14px; border-radius: 8px;
+    font-size: 0.82rem; font-weight: 600;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .gd-store-btn:hover { border-color: #851dd5; background: rgba(133,29,213,0.10); }
+  .gd-store-ico,
+  .gd-store-ico svg { background: transparent; border: none; }
+  .gd-store-ico { display: inline-flex; }
+
+  /* Tag cloud */
+  .gd-tag-cloud { display: flex; flex-wrap: wrap; gap: 6px; }
+  .gd-tag {
+    background: var(--surface); color: white;
+    padding: 4px 12px; border-radius: 999px;
+    border: 1px solid var(--border);
+    font-size: 0.78rem; font-weight: 500;
+  }
+
+  /* Info table */
+  .gd-info { margin: 0; display: flex; flex-direction: column; }
+  .gd-info-row {
+    display: flex; justify-content: space-between; gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .gd-info-row:last-child { border-bottom: none; }
+  .gd-info dt { color: var(--muted); font-size: 0.82rem; }
+  .gd-info dd { color: white; font-size: 0.85rem; margin: 0; text-align: right; font-weight: 500; max-width: 60%; }
+
+  /* Age rating — Figma 188:2 */
+  .gd-age {
+    padding: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 8px;
+    overflow: visible;
+    position: relative;
+  }
+  .gd-age-row {
+    display: flex; gap: 12px; align-items: center;
+  }
+  .gd-age-badge {
+    width: 65px; height: 79px; flex-shrink: 0;
+    background: linear-gradient(180deg, #851dd5, #5b14a0);
+    border-radius: 6px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: white; gap: 2px;
+    align-self: center;
+  }
+  .gd-age-img {
+    width: 65px; height: auto; max-height: 84px;
+    flex-shrink: 0; flex-grow: 0;
+    object-fit: contain; display: block;
+    align-self: center;
+  }
+  .gd-age-num { font-size: 1.4rem; font-weight: 800; line-height: 1; }
+  .gd-age-board { font-size: 0.62rem; font-weight: 700; letter-spacing: 0.06em; opacity: 0.85; }
+  .gd-age-body {
+    font-family: 'Urbanist', system-ui, sans-serif;
+    flex: 1 1 auto; min-width: 0;
+    display: flex; flex-direction: column; gap: 2px;
+    justify-content: center;
+  }
+  .gd-age-head { display: flex; flex-direction: column; gap: 0; min-width: 0; }
+  .gd-age-line {
+    margin: 0; min-width: 0; max-width: 100%;
+    padding: 1px 0; cursor: default;
+    position: relative;
+    overflow: visible;
+  }
+  .gd-age-line > span {
+    display: block; max-width: 100%;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .gd-age-code {
+    color: #fff;
+    font-weight: 700; font-size: 18px;
+    letter-spacing: -0.54px; line-height: 1.4;
+  }
+  .gd-age-desc {
+    color: rgba(255, 255, 255, 0.58);
+    font-weight: 500; font-size: 14px;
+    letter-spacing: -0.42px; line-height: 1.4;
+  }
+  .gd-age-divider {
+    display: block; height: 1px; width: 100%;
+    background: rgba(255, 255, 255, 0.12);
+  }
+
+  /* Tooltip on truncated age-rating lines */
+  .gd-age-body [data-tip] { position: relative; }
+  .gd-age-body [data-tip]::after {
+    content: attr(data-tip);
+    position: absolute;
+    left: 0; bottom: calc(100% + 6px);
+    z-index: 30;
+    padding: 6px 10px;
+    background: #111418;
+    color: #fff;
+    font-family: 'Urbanist', system-ui, sans-serif;
+    font-weight: 500; font-size: 12px; line-height: 1.4;
+    letter-spacing: -0.2px;
+    white-space: normal;
+    max-width: 240px; width: max-content;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 6px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+    opacity: 0; pointer-events: none;
+    transform: translateY(2px);
+    transition: opacity 120ms ease, transform 120ms ease;
+  }
+  .gd-age-body [data-tip]:hover::after,
+  .gd-age-body [data-tip]:focus-visible::after {
+    opacity: 1; transform: translateY(0);
+  }
+
+  .gd-lang { margin: 0; color: #d5d9de; font-size: 0.85rem; line-height: 1.6; }
+
+  .gd-link-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
+  .gd-link-list a {
+    color: #c5cbd2; text-decoration: none; font-size: 0.85rem;
+    padding: 0.35rem 0; border-radius: 0;
+    display: block; background: transparent; border: none;
+    transition: color 0.15s;
+  }
+  .gd-link-list a:hover { color: #b06be4; }
+
+  .gd-side-cta { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+  .gd-side-cta p { margin: 0; color: var(--muted); font-size: 0.85rem; }
+  .gd-side-cta a { color: var(--accent-2); }
+
+  /* ---------- FOOTER (matches homepage) ---------- */
+  .footer { background: var(--bg-2); border-top: 1px solid var(--border); padding: 2.5rem 2.5rem 2rem; margin-top: 64px; }
+  .footer-inner {
+    max-width: 1240px; margin: 0 auto;
+    display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 2rem;
+  }
+  .foot-brand .brand { display: inline-flex; align-items: center; gap: 0.4rem; font-weight: 700; margin-bottom: 0.75rem; color: white; }
+  .foot-brand .logo { color: var(--accent-2); }
+  .foot-brand p { color: var(--muted); font-size: 0.82rem; line-height: 1.6; max-width: 38ch; margin: 0 0 0.6rem; }
+  .foot-brand .muted { font-size: 0.78rem; }
+  .foot-col h5 { margin: 0 0 0.9rem; font-size: 0.78rem; color: var(--muted); font-weight: 500; text-transform: uppercase; letter-spacing: 0.08em; }
+  .foot-col a { display: block; color: #b6bcc6; text-decoration: none; font-size: 0.85rem; margin-bottom: 0.55rem; }
+  .foot-col a:hover { color: var(--text); }
+
+  /* ---------- Responsive ---------- */
+  @media (max-width: 1100px) {
+    .gd-related-grid { grid-template-columns: repeat(3, 1fr); }
+  }
+  @media (max-width: 1600px) {
+    .gd-hero { margin: 0 80px; }
+  }
+  @media (max-width: 1100px) {
+    .gd-hero { margin: 0 24px; }
+    .gd-hero-info { width: auto; flex: 1 1 0; min-width: 0; }
+  }
+  @media (max-width: 960px) {
+    .gd-hero { margin: 0 16px; height: auto; min-height: 580px; }
+    .gd-hero-wrap { padding: 32px; }
+    .gd-hero-shade-left, .gd-hero-shade-right { width: 60px; }
+    .gd-grid { grid-template-columns: 1fr; }
+    .gd-col-side { order: 2; }
+    .gd-related-grid { grid-template-columns: repeat(3, 1fr); }
+  }
+  @media (max-width: 720px) {
+    .gd-main { padding: 56px 1.25rem 3rem; }
+    .gd-hero-wrap { padding: 20px; }
+    .gd-hero-content { flex-direction: column; align-items: flex-start; gap: 20px; }
+    .gd-hero-poster { width: 140px; height: 249px; }
+    .gd-hero-info { width: 100%; gap: 14px; }
+    .gd-hero-title { font-size: 24px; }
+    .gd-hero-details { gap: 20px; flex-wrap: wrap; }
+    .gd-hero-cards { flex-direction: column; gap: 12px; }
+    .gd-specs-head, .gd-specs-row { grid-template-columns: 130px 1fr 1fr; }
+    .gd-specs-cell { padding: 14px; font-size: 0.82rem; }
+    .gd-shot-strip { grid-template-columns: repeat(2, 1fr); }
+    .gd-related-grid { grid-template-columns: repeat(2, 1fr); }
+    .footer-inner { grid-template-columns: 1fr; }
   }
 </style>
+
+<script>
+  // Tab switching
+  const tabs = document.querySelectorAll<HTMLButtonElement>('[data-tab-target]');
+  const panels = document.querySelectorAll<HTMLElement>('[data-tab-panel]');
+  tabs.forEach((tab) => {
+    tab.addEventListener('click', () => {
+      const target = tab.dataset.tabTarget;
+      tabs.forEach((t) => {
+        const active = t === tab;
+        t.classList.toggle('is-active', active);
+        t.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+      panels.forEach((p) => {
+        p.dataset.active = p.dataset.tabPanel === target ? 'true' : 'false';
+      });
+    });
+  });
+
+  // Screenshot carousel
+  document.querySelectorAll<HTMLElement>('[data-carousel]').forEach((root) => {
+    const main = root.querySelector<HTMLImageElement>('[data-carousel-main]');
+    const strip = root.querySelector<HTMLElement>('[data-carousel-strip]');
+    const thumbs = Array.from(root.querySelectorAll<HTMLButtonElement>('[data-carousel-thumb]'));
+    if (!main || !strip || thumbs.length === 0) return;
+
+    const PAGE_SIZE = 4;
+    let idx = 0;
+    let pageStart = 0;
+    const renderPage = () => {
+      const maxStart = Math.max(0, thumbs.length - PAGE_SIZE);
+      pageStart = Math.max(0, Math.min(pageStart, maxStart));
+      thumbs.forEach((t, j) => {
+        const visible = j >= pageStart && j < pageStart + PAGE_SIZE;
+        t.classList.toggle('is-hidden', !visible);
+      });
+    };
+    const go = (next: number) => {
+      idx = (next + thumbs.length) % thumbs.length;
+      const full = thumbs[idx].dataset.full;
+      const img = thumbs[idx].querySelector('img');
+      if (full) main.src = full;
+      else if (img) main.src = img.src;
+      thumbs.forEach((t, j) => t.classList.toggle('is-active', j === idx));
+      if (idx < pageStart) pageStart = idx;
+      else if (idx >= pageStart + PAGE_SIZE) pageStart = idx - PAGE_SIZE + 1;
+      renderPage();
+    };
+    renderPage();
+
+    root.querySelectorAll<HTMLButtonElement>('[data-carousel-prev]').forEach((b) =>
+      b.addEventListener('click', () => go(idx - 1))
+    );
+    root.querySelectorAll<HTMLButtonElement>('[data-carousel-next]').forEach((b) =>
+      b.addEventListener('click', () => go(idx + 1))
+    );
+    thumbs.forEach((t, i) => t.addEventListener('click', () => go(i)));
+  });
+</script>

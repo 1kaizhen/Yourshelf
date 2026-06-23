@@ -1,23 +1,82 @@
 ---
 import Layout from '../layouts/Layout.astro';
 import Nav from '../components/Nav.astro';
-import GameSearch from '../components/GameSearch.tsx';
-import GameRow from '../components/GameRow.astro';
-import { fetchDiscover } from '../lib/api';
+import { fetchDiscover, type GameLite } from '../lib/api';
 
-const topRated = await fetchDiscover({ sort: 'rating', limit: 12 });
+const q = (Astro.url.searchParams.get('q') ?? '').trim();
+const API_BASE = import.meta.env.PUBLIC_API_URL;
+
+let results: GameLite[] = [];
+let error: string | null = null;
+
+if (q) {
+  try {
+    const res = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(q)}`);
+    if (res.ok) {
+      const data = (await res.json()) as { results: GameLite[] };
+      results = data.results;
+    } else {
+      error = `Search failed (${res.status})`;
+    }
+  } catch (e) {
+    error = (e as Error).message;
+  }
+}
+
+const suggestions = q && results.length === 0 ? await fetchDiscover({ sort: 'rating', limit: 12 }) : [];
 ---
 
 <Layout>
   <div class="page">
     <Nav />
     <main class="container">
-      <h1>Search games</h1>
-      <GameSearch client:only="react" />
+      <header class="search-header">
+        <h1>{q ? `Search results for "${q}"` : 'Search'}</h1>
+        {q && !error && <p class="count">{results.length} {results.length === 1 ? 'match' : 'matches'}</p>}
+        {error && <p class="err">{error}</p>}
+      </header>
 
-      <div class="divider"><span>Or browse recommended</span></div>
-
-      <GameRow title="Top Rated by Critics" items={topRated} href="/browse?sort=rating" />
+      {!q ? (
+        <section class="empty">
+          <p>Start typing in the search bar above to find games. Press <kbd>Ctrl</kbd> + <kbd>K</kbd> to open search.</p>
+        </section>
+      ) : results.length === 0 && !error ? (
+        <section class="empty">
+          <p>No games match "{q}". Try a different title or studio name.</p>
+          {suggestions.length > 0 && (
+            <>
+              <h2>You might like</h2>
+              <ul class="results-grid">
+                {suggestions.map((g) => (
+                  <li>
+                    <a href={`/games/${g.igdb_id}`}>
+                      {g.cover_url ? <img src={g.cover_url} alt="" loading="lazy" /> : <div class="ph" />}
+                      <div class="meta">
+                        <div class="name">{g.name}</div>
+                        {g.year && <div class="year">{g.year}</div>}
+                      </div>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </section>
+      ) : (
+        <ul class="results-grid">
+          {results.map((g) => (
+            <li>
+              <a href={`/games/${g.igdb_id}`}>
+                {g.cover_url ? <img src={g.cover_url} alt="" loading="lazy" /> : <div class="ph" />}
+                <div class="meta">
+                  <div class="name">{g.name}</div>
+                  {g.year && <div class="year">{g.year}</div>}
+                </div>
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
     </main>
   </div>
 </Layout>
@@ -26,12 +85,42 @@ const topRated = await fetchDiscover({ sort: 'rating', limit: 12 });
   :global(body) { background: #0b0d10; color: #e6e8eb; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; }
   .page { min-height: 100vh; }
   .container { max-width: 72rem; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
-  h1 { margin: 0 0 1.5rem; letter-spacing: -0.02em; }
 
-  .divider {
-    display: flex; align-items: center; gap: 1rem;
-    color: #9aa3ad; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.08em;
-    margin: 2.5rem 0 1.5rem;
+  .search-header { margin-bottom: 2rem; }
+  .search-header h1 {
+    margin: 0; font-size: 1.7rem; letter-spacing: -0.02em;
   }
-  .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: #1f242b; }
+  .count { color: #9aa3ad; margin: 0.4rem 0 0; font-size: 0.9rem; }
+  .err { color: #ff8a93; margin: 0.4rem 0 0; }
+
+  .empty { color: #9aa3ad; }
+  .empty p { font-size: 1rem; }
+  .empty kbd {
+    background: #15181f; border: 1px solid #20242c; color: #e6e8eb;
+    padding: 0.1rem 0.45rem; border-radius: 6px;
+    font-size: 0.8rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .empty h2 {
+    color: #e6e8eb; margin: 2rem 0 1rem;
+    font-size: 1.05rem; letter-spacing: -0.01em;
+  }
+
+  .results-grid {
+    list-style: none; padding: 0; margin: 0;
+    display: grid; gap: 1rem;
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  }
+  .results-grid a {
+    display: block; text-decoration: none; color: inherit;
+    background: #11151a; border: 1px solid #1f242b; border-radius: 10px;
+    overflow: hidden; transition: border-color 0.15s, transform 0.15s;
+  }
+  .results-grid a:hover { border-color: #6366f1; transform: translateY(-2px); }
+  .results-grid img, .ph {
+    width: 100%; aspect-ratio: 3 / 4; object-fit: cover;
+    background: #1a1f26; display: block;
+  }
+  .meta { padding: 0.6rem 0.75rem; }
+  .name { font-size: 0.9rem; font-weight: 500; line-height: 1.3; }
+  .year { font-size: 0.8rem; color: #9aa3ad; margin-top: 0.2rem; }
 </style>
