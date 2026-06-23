@@ -1,8 +1,13 @@
 ---
-import { fetchDiscover } from '../lib/api';
+import { fetchDiscover, fetchCardsByIds } from '../lib/api';
 
-const recommended = await fetchDiscover({ sort: 'rating', limit: 12 });
-const trending = await fetchDiscover({ sort: 'rating', limit: 8 });
+const recommendedLite = await fetchDiscover({ sort: 'rating', limit: 12 });
+const trendingLite = await fetchDiscover({ sort: 'rating', limit: 10 });
+const ids = Array.from(new Set([...recommendedLite, ...trendingLite].map((g) => g.igdb_id)));
+const enriched = await fetchCardsByIds(ids);
+const enrichedMap = new Map(enriched.map((c) => [c.igdb_id, c]));
+const recommended = recommendedLite.map((g) => enrichedMap.get(g.igdb_id) ?? g);
+const trending = trendingLite.map((g) => enrichedMap.get(g.igdb_id) ?? g);
 
 const recommendedJson = JSON.stringify(recommended);
 const trendingJson = JSON.stringify(trending);
@@ -60,7 +65,9 @@ const categories = [
                 <path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
             </button>
-            <div class="sm-thumb-strip" id="searchThumbStrip"></div>
+            <div class="sm-thumb-viewport">
+              <div class="sm-thumb-strip" id="searchThumbStrip"></div>
+            </div>
             <button class="sm-arrow" type="button" data-thumb-next aria-label="Next">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
                 <path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -119,29 +126,54 @@ const categories = [
     }
 
     function ratingLabel(g) {
-      if (g.rating) return `${(Math.round(g.rating) / 10).toFixed(1)}/10 Rating`;
-      if (g.year) return `${g.year}`;
-      return '';
+      const r = g.rating;
+      if (r == null) return '';
+      // Backend rating is 0–100 (IGDB scale); show as X.X/10
+      const val = r > 10 ? r / 10 : r;
+      return `${val.toFixed(1)}/10 Rating`;
     }
 
     function cardHTML(g) {
       const img = g.cover_url
         ? `<img src="${g.cover_url}" alt="" loading="lazy" />`
         : `<div class="sm-ph"></div>`;
+      const label = ratingLabel(g);
+      const ratingDiv = label ? `<div class="sm-card-rating">${esc(label)}</div>` : '';
       return `<a class="sm-card" href="/games/${g.igdb_id}">
         <div class="sm-card-cover">${img}</div>
         <div class="sm-card-meta">
-          <div class="sm-card-rating">${esc(ratingLabel(g))}</div>
+          ${ratingDiv}
           <div class="sm-card-name">${esc(g.name)}</div>
         </div>
       </a>`;
     }
 
     thumbStrip.innerHTML = recommended.map(thumbHTML).join('');
-    trendGrid.innerHTML = trending.slice(0, 4).map(cardHTML).join('');
+    trendGrid.innerHTML = trending.slice(0, 10).map(cardHTML).join('');
 
-    thumbPrev?.addEventListener('click', () => { thumbStrip.scrollBy({ left: -240, behavior: 'smooth' }); });
-    thumbNext?.addEventListener('click', () => { thumbStrip.scrollBy({ left: 240, behavior: 'smooth' }); });
+    const thumbViewport = thumbStrip.parentElement;
+    function scrollThumbs(dir) {
+      if (!thumbViewport) return;
+      const first = thumbStrip.querySelector('.sm-thumb');
+      const step = first ? (first.getBoundingClientRect().width + 10) : 80;
+      const visible = Math.max(1, Math.floor(thumbViewport.clientWidth / step));
+      thumbViewport.scrollBy({ left: dir * step * visible, behavior: 'smooth' });
+    }
+    thumbPrev?.addEventListener('click', () => scrollThumbs(-1));
+    thumbNext?.addEventListener('click', () => scrollThumbs(1));
+
+    // Auto-hide scrollbar — show only while actively scrolling
+    function attachAutoHideScrollbar(el) {
+      if (!el) return;
+      let t = null;
+      el.addEventListener('scroll', () => {
+        el.classList.add('is-scrolling');
+        if (t) clearTimeout(t);
+        t = setTimeout(() => el.classList.remove('is-scrolling'), 700);
+      }, { passive: true });
+    }
+    attachAutoHideScrollbar(modal.querySelector('.sm-main'));
+    attachAutoHideScrollbar(modal.querySelector('.sm-side'));
 
     function open() {
       modal.setAttribute('aria-hidden', 'false');
@@ -159,11 +191,13 @@ const categories = [
       thumbSection.hidden = false;
       trendSection.hidden = false;
       hint.textContent = '';
+      modal.classList.remove('is-searching');
     }
     function showResults() {
       resultsSection.hidden = false;
       thumbSection.hidden = true;
       trendSection.hidden = true;
+      modal.classList.add('is-searching');
     }
 
     modal.addEventListener('click', (e) => {
@@ -236,11 +270,11 @@ const categories = [
         const params = new URLSearchParams();
         if (cat === 'rating' || cat === 'release_date') params.set('sort', cat);
         else if (cat === 'story' || cat === 'adventure' || cat === 'shooter') params.set('genre', cat);
-        params.set('limit', '8');
+        params.set('limit', '10');
         fetch(`${apiBase}/api/discover?${params.toString()}`)
           .then((r) => r.ok ? r.json() : { results: [] })
           .then((d) => {
-            trendGrid.innerHTML = (d.results || []).slice(0, 4).map(cardHTML).join('');
+            trendGrid.innerHTML = (d.results || []).slice(0, 10).map(cardHTML).join('');
           })
           .catch(() => {});
       });
@@ -253,8 +287,8 @@ const categories = [
   .sm-overlay {
     position: fixed; inset: 0; z-index: 1000;
     display: none;
-    align-items: flex-start; justify-content: center;
-    padding-top: 5rem;
+    align-items: center; justify-content: center;
+    padding: 2rem;
     font-family: 'Urbanist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   }
   .sm-overlay[aria-hidden='false'] { display: flex; }
@@ -268,8 +302,9 @@ const categories = [
   /* Panel — matches Figma: bg #191919, radius 29.079px */
   .sm-panel {
     position: relative;
-    width: min(72rem, calc(100% - 3rem));
-    max-height: calc(100vh - 7rem);
+    width: min(68.5rem, calc(100% - 3rem));
+    margin: 0 auto;
+    height: min(720px, calc(100vh - 4rem));
     background: #191919;
     border-radius: 29.079px;
     overflow: hidden;
@@ -288,6 +323,7 @@ const categories = [
     flex: 1;
     display: flex; align-items: center; gap: 8px;
     min-width: 0;
+    margin-right: 16px;
   }
   .sm-icon { color: rgba(255, 255, 255, 0.26); flex-shrink: 0; }
   #searchModalInput {
@@ -295,13 +331,15 @@ const categories = [
     background: transparent; border: 0; outline: 0;
     color: #fff;
     font-family: inherit;
-    font-weight: 600; /* Urbanist SemiBold */
-    font-size: 14px;
-    letter-spacing: -0.56px;
+    font-weight: 500;
+    font-size: 16px;
+    letter-spacing: normal;
+    padding-right: 8px;
   }
   #searchModalInput::placeholder {
-    color: rgba(255, 255, 255, 0.26);
-    font-weight: 600;
+    color: rgba(255, 255, 255, 0.32);
+    font-weight: 500;
+    letter-spacing: normal;
   }
   .sm-kbd {
     background: #2c2c2c;
@@ -323,9 +361,9 @@ const categories = [
     flex: 1; min-height: 0;
   }
 
-  /* Sidebar — 192px, border-right 0.08, padding 16px 12px, gap 4px */
+  /* Sidebar — 250px, border-right 0.08, padding 16px 12px, gap 4px */
   .sm-side {
-    width: 192px;
+    width: 250px;
     flex-shrink: 0;
     border-right: 1px solid rgba(255, 255, 255, 0.08);
     padding: 16px 12px;
@@ -336,22 +374,25 @@ const categories = [
     display: flex; align-items: center; gap: 10px;
     padding: 10px; border-radius: 8px;
     background: transparent; border: 0;
-    color: rgba(255, 255, 255, 0.44);
+    color: rgba(255, 255, 255, 0.32);
     font-family: inherit;
     font-weight: 500; /* Medium */
-    font-size: 14px;
-    letter-spacing: -0.42px;
+    font-size: 16px;
+    letter-spacing: normal;
     text-align: left;
     cursor: pointer;
     width: 100%;
     white-space: nowrap;
+    transition: color 0.15s ease, background 0.15s ease;
   }
-  .sm-side-item:hover { color: rgba(255, 255, 255, 0.7); }
+  .sm-side-item:hover { color: rgba(255, 255, 255, 0.65); }
   .sm-side-item.active {
     background: rgba(255, 255, 255, 0.08);
-    color: rgba(255, 255, 255, 0.85);
-    font-weight: 600; /* SemiBold */
+    color: #ffffff;
+    font-weight: 700; /* Bold */
   }
+  .sm-side-item .sm-side-icon { opacity: 0.6; transition: opacity 0.15s ease; }
+  .sm-side-item.active .sm-side-icon { opacity: 1; }
   .sm-side-icon { flex-shrink: 0; }
 
   /* Main — flex column, gap 24, padding 16 */
@@ -376,39 +417,46 @@ const categories = [
     color: #fff;
     font-family: inherit;
     font-weight: 700; /* Bold */
-    font-size: 14px;
-    letter-spacing: -0.56px;
+    font-size: 18px;
+    letter-spacing: -0.72px;
   }
 
-  /* Thumb row — gap 10, items 70x70 with arrow buttons */
+  /* Thumb row — compact arrows + poster-aspect thumbs with edge fade */
   .sm-thumb-wrap {
-    display: flex; gap: 10px; align-items: stretch;
+    display: flex; gap: 10px; align-items: stretch; justify-content: center;
     width: 100%;
   }
   .sm-arrow {
-    flex: 1; min-width: 0;
+    flex: 0 0 32px; width: 32px;
     background: #242424;
-    border: 0; border-radius: 4px;
+    border: 0; border-radius: 6px;
     color: #fff;
     cursor: pointer;
     display: flex; align-items: center; justify-content: center;
-    align-self: stretch;
   }
   .sm-arrow:hover { background: #2e2e2e; }
+  .sm-thumb-viewport {
+    flex: 1 1 auto;
+    min-width: 0;
+    position: relative;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%);
+            mask-image: linear-gradient(to right, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%);
+  }
+  .sm-thumb-viewport::-webkit-scrollbar { display: none; }
   .sm-thumb-strip {
     display: flex; gap: 10px;
-    overflow-x: auto;
-    scroll-snap-type: x mandatory;
-    scrollbar-width: none;
+    width: max-content;
   }
-  .sm-thumb-strip::-webkit-scrollbar { display: none; }
   .sm-thumb {
-    flex: 0 0 110px;
-    width: 110px; aspect-ratio: 3 / 4;
-    border-radius: 8px;
+    flex: 0 0 128px;
+    width: 128px;
+    aspect-ratio: 3 / 4;
+    border-radius: 6px;
     overflow: hidden;
     background: #242424;
-    scroll-snap-align: start;
     display: block;
     transition: transform 0.15s, outline 0.15s;
     outline: 1px solid transparent;
@@ -420,14 +468,15 @@ const categories = [
     display: block;
   }
 
-  /* Card grid — 4 per row, gap 16 */
+  /* Card grid — 5 per row, fixed 3:4 cover ratio */
   .sm-card-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 16px;
+    grid-template-columns: repeat(5, 1fr);
+    column-gap: 14px;
+    row-gap: 28px;
   }
   .sm-card {
-    display: flex; flex-direction: column; gap: 8px;
+    display: flex; flex-direction: column; gap: 10px;
     text-decoration: none; color: inherit;
     min-width: 0;
     transition: transform 0.15s;
@@ -436,7 +485,7 @@ const categories = [
   .sm-card-cover {
     width: 100%;
     aspect-ratio: 3 / 4;
-    border-radius: 12px;
+    border-radius: 10px;
     overflow: hidden;
     background: #242424;
   }
@@ -446,22 +495,23 @@ const categories = [
     display: block;
   }
   .sm-card-meta {
-    display: flex; flex-direction: column; gap: 2px;
+    display: flex; flex-direction: column; gap: 1px;
   }
   .sm-card-rating {
     font-family: inherit;
     font-weight: 500; /* Medium */
-    font-size: 12px;
-    color: rgba(255, 255, 255, 0.66);
-    line-height: 1.4;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.55);
+    line-height: 1.35;
+    letter-spacing: -0.22px;
   }
   .sm-card-name {
     font-family: inherit;
     font-weight: 700; /* Bold */
-    font-size: 14px;
+    font-size: 15px;
     color: #fff;
-    letter-spacing: -0.42px;
-    line-height: 1.4;
+    letter-spacing: -0.45px;
+    line-height: 1.35;
     overflow: hidden;
     display: -webkit-box;
     -webkit-line-clamp: 2;
@@ -470,6 +520,47 @@ const categories = [
 
   .sm-section[hidden] { display: none !important; }
 
+  /* Hide category sidebar while searching */
+  .sm-overlay.is-searching .sm-side { display: none; }
+
+  /* Custom scrollbar — dark theme, auto-hide when idle */
+  .sm-main,
+  .sm-side {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+    transition: scrollbar-color 0.25s ease;
+  }
+  .sm-main::-webkit-scrollbar,
+  .sm-side::-webkit-scrollbar { width: 8px; height: 8px; }
+  .sm-main::-webkit-scrollbar-track,
+  .sm-side::-webkit-scrollbar-track { background: transparent; }
+  .sm-main::-webkit-scrollbar-thumb,
+  .sm-side::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    transition: background 0.25s ease;
+  }
+  .sm-main.is-scrolling,
+  .sm-side.is-scrolling,
+  .sm-main:hover,
+  .sm-side:hover { scrollbar-color: rgba(255, 255, 255, 0.18) transparent; }
+  .sm-main.is-scrolling::-webkit-scrollbar-thumb,
+  .sm-side.is-scrolling::-webkit-scrollbar-thumb,
+  .sm-main:hover::-webkit-scrollbar-thumb,
+  .sm-side:hover::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+    background-clip: padding-box;
+  }
+  .sm-main::-webkit-scrollbar-thumb:hover,
+  .sm-side::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.3) !important;
+    background-clip: padding-box;
+  }
+  .sm-main::-webkit-scrollbar-corner,
+  .sm-side::-webkit-scrollbar-corner { background: transparent; }
+
   .sm-hint {
     color: rgba(255, 255, 255, 0.44);
     font-size: 13px;
@@ -477,7 +568,7 @@ const categories = [
   }
 
   @media (max-width: 800px) {
-    .sm-overlay { padding-top: 2.5rem; }
+    .sm-overlay { padding: 1rem; }
     .sm-panel {
       width: calc(100% - 1rem);
       border-radius: 20px;
